@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "synthseg-mlx"
-version = "0.3.2"
+version = "0.3.3"
 description = "Native MLX implementation of SynthSeg for Apple Silicon (macOS arm64, Metal)"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"

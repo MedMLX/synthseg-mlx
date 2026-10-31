@@ -15,7 +15,7 @@ Segment brain MRI or CT with SynthSeg in native MLX. Includes cortical parcellat
 ```bash
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install "synthseg-mlx>=0.3.2"
+uv pip install "synthseg-mlx>=0.3.3"
 ```
 
 ```python

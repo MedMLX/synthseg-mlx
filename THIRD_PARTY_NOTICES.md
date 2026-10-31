@@ -1,5 +1,9 @@
 # Third-party notices
 
+The example image shows SynthSeg output on a synthetic T1-weighted brain image
+generated with NVIDIA NV-Generate-MR-Brain (seed 0); it does not use a patient
+scan. The generator's model weights retain their publisher terms.
+
 MedMLX-authored additions are licensed under [Apache-2.0](LICENSE).
 The upstream attribution and license notices are retained below.
 
