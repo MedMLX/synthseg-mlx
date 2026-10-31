@@ -1,0 +1,74 @@
+{
+  "extracted_typing_adaptation": [
+    {
+      "upstream_path": "ext/lab2im/utils.py",
+      "package_path": "src/synthseg_mlx/_lab2im/utils.py",
+      "upstream_revision": "d6a64db19ec7b8b71c64edd59e7e485e0235c26c",
+      "normalized_functions": [
+        "load_volume",
+        "save_volume",
+        "get_volume_info",
+        "get_list_labels",
+        "load_array_if_path",
+        "reformat_to_list",
+        "reformat_to_n_channels_array",
+        "get_dims",
+        "add_axis",
+        "find_closest_number_divisible_by_m",
+        "mkdir"
+      ],
+      "adaptation": "Typing-only adaptation of the retained extracted subset: native/domain array annotations, overloads, casts and typing imports; CSV name-list binding is separate from the array parameter. Numerical statements, defaults, parameter order and notices are retained. This is not a byte-identical upstream file."
+    },
+    {
+      "upstream_path": "ext/lab2im/edit_volumes.py",
+      "package_path": "src/synthseg_mlx/_lab2im/edit_volumes.py",
+      "upstream_revision": "d6a64db19ec7b8b71c64edd59e7e485e0235c26c",
+      "normalized_functions": [
+        "rescale_volume",
+        "crop_volume",
+        "crop_volume_with_idx",
+        "pad_volume",
+        "resample_volume",
+        "get_ras_axes",
+        "align_volume_to_ref",
+        "get_largest_connected_component"
+      ],
+      "adaptation": "Typing-only adaptation of the retained extracted subset: native/domain array annotations, overloads, casts and typing imports; CSV name-list binding is separate from the array parameter. Numerical statements, defaults, parameter order and notices are retained. This is not a byte-identical upstream file."
+    },
+    {
+      "upstream_path": "SynthSeg/predict_synthseg.py",
+      "package_path": "src/synthseg_mlx/processing.py",
+      "upstream_revision": "d6a64db19ec7b8b71c64edd59e7e485e0235c26c",
+      "normalized_functions": [
+        "preprocess",
+        "postprocess",
+        "largest_component",
+        "argmax_channels"
+      ],
+      "adaptation": "Typing-only adaptation of the retained extracted subset: native/domain array annotations, overloads, casts and typing imports; CSV name-list binding is separate from the array parameter. Numerical statements, defaults, parameter order and notices are retained. This is not a byte-identical upstream file."
+    },
+    {
+      "upstream_path": "SynthSeg/labels.py",
+      "package_path": "src/synthseg_mlx/labels.py",
+      "upstream_revision": "d6a64db19ec7b8b71c64edd59e7e485e0235c26c",
+      "normalized_functions": [
+        "get_flip_indices",
+        "write_csv"
+      ],
+      "adaptation": "Typing-only adaptation of the retained extracted subset: native/domain array annotations, overloads, casts and typing imports; CSV name-list binding is separate from the array parameter. Numerical statements, defaults, parameter order and notices are retained. This is not a byte-identical upstream file."
+    }
+  ],
+  "native_partial_stubs": [
+    {
+      "version": "0.32.3",
+      "installed_source": "/tmp/medmlx-synthseg-types-env/lib/python3.13/site-packages/mlx/nn/layers/base.py",
+      "partial_stub": "typings/mlx/nn/layers/base.pyi"
+    },
+    {
+      "version": "0.32.3",
+      "installed_source": "/tmp/medmlx-synthseg-types-env/lib/python3.13/site-packages/mlx/nn/layers/convolution.py",
+      "partial_stub": "typings/mlx/nn/layers/convolution.pyi"
+    }
+  ],
+  "scope": "Development typing only. No implementation of reference or native computations, no runtime package or checkpoint pin changes. Native MLX class identity is retained."
+}

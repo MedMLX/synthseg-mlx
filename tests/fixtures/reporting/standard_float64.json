@@ -1,0 +1,135 @@
+{
+  "source_revision": "d6a64db19ec7b8b71c64edd59e7e485e0235c26c",
+  "source_files": {
+    "ext/lab2im/utils.py": {
+      "functions": [
+        "get_dims",
+        "reformat_to_list"
+      ]
+    },
+    "ext/lab2im/edit_volumes.py": {
+      "functions": [
+        "align_volume_to_ref",
+        "crop_volume_with_idx",
+        "get_largest_connected_component",
+        "get_ras_axes"
+      ]
+    },
+    "SynthSeg/predict_synthseg.py": {
+      "functions": [
+        "argmax_channels",
+        "largest_component",
+        "postprocess"
+      ]
+    }
+  },
+  "reference_host": "darwin-arm64",
+  "runtime": {
+    "numpy": "2.3.5",
+    "scipy": "1.17.1",
+    "nibabel": "5.4.2"
+  },
+  "input_fixture": "standard.npz",
+  "inputs": {
+    "segmentation": {
+      "shape": [
+        1,
+        16,
+        16,
+        16,
+        33
+      ],
+      "dtype": "float32"
+    },
+    "parcellation": {
+      "shape": [
+        1,
+        16,
+        16,
+        16,
+        5
+      ],
+      "dtype": "float32"
+    },
+    "labels_segmentation": {
+      "shape": [
+        33
+      ],
+      "dtype": "int32"
+    },
+    "labels_parcellation": {
+      "shape": [
+        5
+      ],
+      "dtype": "int32"
+    },
+    "topology_classes": {
+      "shape": [
+        33
+      ],
+      "dtype": "int32"
+    }
+  },
+  "mask": {
+    "shape": [
+      16,
+      16,
+      16
+    ],
+    "dtype": "int32"
+  },
+  "posteriors": {
+    "shape": [
+      16,
+      16,
+      16,
+      33
+    ],
+    "dtype": "float32"
+  },
+  "volumes": {
+    "shape": [
+      37
+    ],
+    "dtype": "float64"
+  },
+  "expected_volumes": [
+    2369.274,
+    20.224,
+    361.445,
+    35.43,
+    21.836,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1558.61,
+    0.0,
+    0.0,
+    16.857,
+    306.407,
+    30.48,
+    17.985,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    127.693,
+    233.752,
+    231.241,
+    75.166
+  ]
+}

@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "synthseg-mlx"
+version = "0.3.2"
+description = "Native MLX implementation of SynthSeg for Apple Silicon (macOS arm64, Metal)"
+readme = "README.md"
+requires-python = ">=3.13,<3.15"
+license = "Apache-2.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{ name = "Joseph Sandoval" }, { name = "Alfredo Sandoval Jr." }]
+classifiers = ["Operating System :: MacOS :: MacOS X"]
+dependencies = [
+  "medmlx-core==0.2.5",
+  "mlx>=0.32.4,<0.33",
+  "nibabel>=5.3,<6",
+  "numpy>=2.0,<3",
+  "scipy>=1.14,<2",
+]
+
+[project.urls]
+Homepage = "https://medmlx.org"
+Repository = "https://github.com/MedMLX/synthseg-mlx"
+Weights = "https://huggingface.co/MedMLX/synthseg-mlx"
+
+[project.entry-points."medmlx.models"]
+synthseg = "synthseg_mlx.medmlx:MODEL"
+
+[project.optional-dependencies]
+dev = [
+  "pyright==1.1.414",
+  "hypothesis>=6.100,<7",
+  "pytest>=8.4,<10",
+  "ruff>=0.13,<1",
+  "scipy-stubs>=1.18.1,<1.19",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/synthseg_mlx"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+extend-select = ["TID251", "TID252", "ANN401"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Preserve the upstream numerical statements and formatting verbatim.
+"src/synthseg_mlx/processing.py" = ["E501", "UP", "SIM", "RUF"]
+"src/synthseg_mlx/labels.py" = ["E501", "UP", "SIM", "RUF"]
+"src/synthseg_mlx/_lab2im/*.py" = ["E501", "UP", "SIM", "RUF"]
+
+[tool.pyright]
+stubPath = "typings"
+include = ["scripts", "src", "tests", "typings"]
+extraPaths = ["src", "scripts"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+enableTypeIgnoreComments = false
+reportUnnecessaryTypeIgnoreComment = "error"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.Any" = { msg = "Use a precise type at the boundary." }
+"typing_extensions.Any" = { msg = "Use a precise type at the boundary." }
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "src/synthseg_mlx",
+  "pyproject.toml",
+  "README.md",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+]
