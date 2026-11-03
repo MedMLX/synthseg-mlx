@@ -19,6 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from synthseg_mlx._typing import (
@@ -421,16 +422,14 @@ def run(
     _require_weight_files(models_dir, variant)
     output.mkdir(parents=True, exist_ok=True)
 
-    # Write beside the targets and rename only after the output checks pass, so a failed
-    # run keeps earlier outputs. Fresh files matter: the CSV writer appends, and
-    # _check_outputs treats an existing resampled_input as proof that resampling ran.
-    partial = {role: output / f".{os.getpid()}.{name}" for role, name in OUTPUT_FILES.items()}
+    # Stage privately because the CSV and image writers follow links when opening paths.
+    # Fresh files matter: the CSV writer appends, and _check_outputs treats an existing
+    # resampled_input as proof that resampling ran.
     written = [
         role for role in OUTPUT_FILES if role not in _OPTIONAL_OUTPUT_ROLES or save_posteriors
     ]
-    try:
-        for path in partial.values():
-            path.unlink(missing_ok=True)
+    with TemporaryDirectory(prefix=".synthseg-", dir=output) as staging_dir:
+        partial = {role: Path(staging_dir) / name for role, name in OUTPUT_FILES.items()}
         try:
             runtime = _execute(
                 image,
@@ -456,9 +455,6 @@ def run(
         # Posteriors left by an earlier run would not match the new mask.
         for role in OUTPUT_FILES.keys() - written:
             paths[role].unlink(missing_ok=True)
-    finally:
-        for path in partial.values():
-            path.unlink(missing_ok=True)
     cast(dict[str, object], details).update(
         ct=ct, runtime=runtime, duration_seconds=round(time.perf_counter() - started, 3),
         weights_revision=weights_revision(models_dir)
