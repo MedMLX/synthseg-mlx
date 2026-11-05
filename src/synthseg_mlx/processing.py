@@ -29,10 +29,8 @@ from synthseg_mlx._typing import (
     DoubleArray,
     IndexArray,
     LabelArray,
-    ParcellationPostprocessor,
     RealArray,
     Resolution,
-    SegmentationPostprocessor,
     Size,
 )
 
@@ -137,8 +135,7 @@ def preprocess(
 
 def postprocess(post_patch_seg: RealArray | None, post_patch_parc: RealArray | None, shape: Sequence[int], pad_idx: IndexArray, crop_idx: IndexArray | None,
                 labels_segmentation: IndexArray, labels_parcellation: IndexArray, aff: DoubleArray, im_res: RealArray, fast: bool, topology_classes: IndexArray | None, v1: bool,
-                reuse_segmentation: bool=False, parcellation_postprocessor: ParcellationPostprocessor | None=None,
-                segmentation_postprocessor: SegmentationPostprocessor | None=None, return_posteriors: bool=True, volume_dtype: npt.DTypeLike | None=np.float64) -> tuple[LabelArray, RealArray | None, RealArray]:
+                reuse_segmentation: bool=False, volume_dtype: npt.DTypeLike | None=np.float64) -> tuple[LabelArray, RealArray | None, RealArray]:
     """Convert network posteriors into labels, posteriors and soft volumes.
 
     Keeps the largest connected brain component, applies per-topological-class cleanup
@@ -159,66 +156,56 @@ def postprocess(post_patch_seg: RealArray | None, post_patch_parc: RealArray | N
     parcellation posterior sum is zero; the end-to-end runner rejects non-finite tables.
     """
 
-    volumes = None
-    if segmentation_postprocessor is not None:
-        seg_patch, post_patch_seg, volumes = segmentation_postprocessor(
-            cast(RealArray, post_patch_seg), pad_idx, labels_segmentation, fast, topology_classes,
-            return_posteriors, component_filter=largest_component)
-    else:
-        # get posteriors
-        if not isinstance(cast(object, post_patch_seg), np.ndarray):
-            raise TypeError("post_patch_seg must be a NumPy array")
-        post_patch_seg = np.squeeze(cast(RealArray, post_patch_seg))
-        if fast | (topology_classes is None):
-            post_patch_seg = edit_volumes.crop_volume_with_idx(post_patch_seg, pad_idx, n_dims=3, return_copy=False)
+    # get posteriors
+    if not isinstance(cast(object, post_patch_seg), np.ndarray):
+        raise TypeError("post_patch_seg must be a NumPy array")
+    post_patch_seg = np.squeeze(cast(RealArray, post_patch_seg))
+    if fast | (topology_classes is None):
+        post_patch_seg = edit_volumes.crop_volume_with_idx(post_patch_seg, pad_idx, n_dims=3, return_copy=False)
 
-        # keep biggest connected component
-        brain_mask = largest_component(np.sum(post_patch_seg[..., 1:], axis=-1) > 0.25)
+    # keep biggest connected component
+    brain_mask = largest_component(np.sum(post_patch_seg[..., 1:], axis=-1) > 0.25)
 
-        # reset posteriors to zero outside the largest connected component of each topological class
-        if (not fast) & (topology_classes is not None):
-            post_patch_seg_mask = post_patch_seg > 0.25
-            post_patch_seg_mask[..., 1:] &= brain_mask[..., None]
-            classes = np.unique(cast(IndexArray, topology_classes))
-            post_patch_seg_mask[..., topology_classes == classes[0]] = True
-            for topology_class in classes[1:]:
-                tmp_topology_indices = np.where(topology_classes == topology_class)[0]
-                tmp_mask = np.any(post_patch_seg_mask[..., tmp_topology_indices], axis=-1)
-                tmp_mask = largest_component(tmp_mask)
-                post_patch_seg_mask[..., tmp_topology_indices] = tmp_mask[..., None]
-        else:
-            post_patch_seg_mask = post_patch_seg > 0.2
-            post_patch_seg_mask[..., 0] = True
-
-        # Labels without topology cleanup still obey the brain mask.
+    # reset posteriors to zero outside the largest connected component of each topological class
+    if (not fast) & (topology_classes is not None):
+        post_patch_seg_mask = post_patch_seg > 0.25
         post_patch_seg_mask[..., 1:] &= brain_mask[..., None]
-        # Owned host storage can be reused after inference.
-        post_patch_seg = cast(RealArray, np.multiply(post_patch_seg, post_patch_seg_mask,
-                                     out=post_patch_seg if reuse_segmentation else None))
-        if (not fast) & (topology_classes is not None):
-            post_patch_seg = edit_volumes.crop_volume_with_idx(post_patch_seg, pad_idx, n_dims=3, return_copy=False)
+        classes = np.unique(cast(IndexArray, topology_classes))
+        post_patch_seg_mask[..., topology_classes == classes[0]] = True
+        for topology_class in classes[1:]:
+            tmp_topology_indices = np.where(topology_classes == topology_class)[0]
+            tmp_mask = np.any(post_patch_seg_mask[..., tmp_topology_indices], axis=-1)
+            tmp_mask = largest_component(tmp_mask)
+            post_patch_seg_mask[..., tmp_topology_indices] = tmp_mask[..., None]
+    else:
+        post_patch_seg_mask = post_patch_seg > 0.2
+        post_patch_seg_mask[..., 0] = True
 
-        # get hard segmentation
-        post_patch_seg /= np.sum(post_patch_seg, axis=-1)[..., np.newaxis]
-        seg_patch = labels_segmentation[argmax_channels(cast(RealArray, post_patch_seg))].astype('int32')
+    # Labels without topology cleanup still obey the brain mask.
+    post_patch_seg_mask[..., 1:] &= brain_mask[..., None]
+    # Owned host storage can be reused after inference.
+    post_patch_seg = cast(RealArray, np.multiply(post_patch_seg, post_patch_seg_mask,
+                                 out=post_patch_seg if reuse_segmentation else None))
+    if (not fast) & (topology_classes is not None):
+        post_patch_seg = edit_volumes.crop_volume_with_idx(post_patch_seg, pad_idx, n_dims=3, return_copy=False)
+
+    # get hard segmentation
+    post_patch_seg /= np.sum(post_patch_seg, axis=-1)[..., np.newaxis]
+    seg_patch = labels_segmentation[argmax_channels(cast(RealArray, post_patch_seg))].astype('int32')
 
     # postprocess parcellation
     volumes_parc = None
     if post_patch_parc is not None:
         mask = (seg_patch == 3) | (seg_patch == 42)
-        if parcellation_postprocessor is not None:
-            seg_patch[mask], volumes_parc = parcellation_postprocessor(
-                post_patch_parc, mask, pad_idx, labels_parcellation)
-        else:
-            if not isinstance(cast(object, post_patch_parc), np.ndarray):
-                raise TypeError("post_patch_parc must be a NumPy array")
-            post_patch_parc = np.squeeze(post_patch_parc)
-            post_patch_parc = edit_volumes.crop_volume_with_idx(post_patch_parc, pad_idx, n_dims=3, return_copy=False)
-            post_patch_parc[..., 0] = (~mask).astype(post_patch_parc.dtype)
-            post_patch_parc /= np.sum(post_patch_parc, axis=-1)[..., np.newaxis]
-            parcellation = cast(RealArray, post_patch_parc)
-            seg_patch[mask] = labels_parcellation[np.argmax(parcellation[mask], axis=-1)]
-            volumes_parc = np.sum(parcellation[..., 1:], axis=(0, 1, 2), dtype=volume_dtype)
+        if not isinstance(cast(object, post_patch_parc), np.ndarray):
+            raise TypeError("post_patch_parc must be a NumPy array")
+        post_patch_parc = np.squeeze(post_patch_parc)
+        post_patch_parc = edit_volumes.crop_volume_with_idx(post_patch_parc, pad_idx, n_dims=3, return_copy=False)
+        post_patch_parc[..., 0] = (~mask).astype(post_patch_parc.dtype)
+        post_patch_parc /= np.sum(post_patch_parc, axis=-1)[..., np.newaxis]
+        parcellation = cast(RealArray, post_patch_parc)
+        seg_patch[mask] = labels_parcellation[np.argmax(parcellation[mask], axis=-1)]
+        volumes_parc = np.sum(parcellation[..., 1:], axis=(0, 1, 2), dtype=volume_dtype)
 
     # paste patches back to matrix of original image size
     if crop_idx is not None:
@@ -240,8 +227,7 @@ def postprocess(post_patch_seg: RealArray | None, post_patch_parc: RealArray | N
         posteriors = edit_volumes.align_volume_to_ref(cast(RealArray, posteriors), np.eye(4), aff_ref=aff, n_dims=3, return_copy=False)
 
     # Accumulate millions of voxel probabilities without float32 rounding drift.
-    if volumes is None:
-        volumes = np.sum(cast(RealArray, posteriors)[..., 1:], axis=tuple(range(0, len(cast(RealArray, posteriors).shape) - 1)), dtype=volume_dtype)
+    volumes = np.sum(cast(RealArray, posteriors)[..., 1:], axis=tuple(range(0, len(cast(RealArray, posteriors).shape) - 1)), dtype=volume_dtype)
     total_volume_cortex_left = np.sum(volumes[np.where(labels_segmentation == 3)[0] - 1])
     total_volume_cortex_right = np.sum(volumes[np.where(labels_segmentation == 42)[0] - 1])
     if not v1:

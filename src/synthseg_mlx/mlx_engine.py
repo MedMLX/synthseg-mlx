@@ -143,7 +143,6 @@ def postprocess_arrays(
         topology_classes=topology_classes,
         v1=variant.v1,
         reuse_segmentation=True,
-        return_posteriors=False,
         volume_dtype=np.float64 if variant is SynthSegVariant.STANDARD else None,
     )
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict
 
 import numpy as np
@@ -109,30 +109,6 @@ class NiftiApi(Protocol):
         ...
     def save(self, img: ImageVolume, filename: str) -> None:
         """Write a NIfTI image to a path."""
-        ...
-
-
-class SegmentationPostprocessor(Protocol):
-    def __call__(
-        self,
-        posteriors: RealArray,
-        pad_idx: IndexArray,
-        labels: IndexArray,
-        fast: bool,
-        topology: IndexArray | None,
-        return_posteriors: bool,
-        *,
-        component_filter: Callable[[BoolArray], BoolArray],
-    ) -> tuple[LabelArray, RealArray | None, RealArray]:
-        """Return labels, optional posteriors, and volumes from segmentation probabilities."""
-        ...
-
-
-class ParcellationPostprocessor(Protocol):
-    def __call__(
-        self, posteriors: RealArray, mask: BoolArray, pad_idx: IndexArray, labels: IndexArray
-    ) -> tuple[LabelArray, RealArray]:
-        """Postprocess masked cortex probabilities into parcel labels and volumes."""
         ...
 
 
