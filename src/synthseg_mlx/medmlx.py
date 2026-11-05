@@ -15,6 +15,7 @@ import gzip
 import os
 import shutil
 import time
+import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -526,13 +527,27 @@ def _validate_image(image: Path) -> None:
     """Check image values and the millimetre geometry used for processing and volumes."""
 
     import nibabel as nib_runtime
+    from nibabel.filebasedimages import ImageFileError
+    from nibabel.spatialimages import HeaderDataError
 
     nib = cast(NiftiApi, nib_runtime)
 
     try:
         loaded = nib.load(str(image))
         data = cast(RealArray, np.asanyarray(loaded.dataobj))
-    except Exception as exc:
+    # NiBabel 5.4 raises these for unreadable input: missing, empty or unknown
+    # files; unsupported header codes; truncated, mis-sized or corrupt gzip data
+    # (OSError, EOFError, zlib.error); and corrupt dimensions on the memory-mapped
+    # (OverflowError) or decompressed (ValueError) read.
+    except (
+        ImageFileError,
+        HeaderDataError,
+        OSError,
+        EOFError,
+        zlib.error,
+        OverflowError,
+        ValueError,
+    ) as exc:
         raise InvalidInputError(f"SynthSeg could not read {image}: {exc}") from exc
     if len(loaded.shape) != 3 or min(loaded.shape) < 3:
         raise InvalidInputError("SynthSeg requires one 3D brain volume")

@@ -64,9 +64,6 @@ dev = [
   "scipy-stubs>=1.18.1,<1.19",
 ]
 
-[tool.hatch.metadata]
-allow-direct-references = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/synthseg_mlx"]
 
