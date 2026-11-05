@@ -473,20 +473,29 @@ def run(
 
 
 def _validate_crop(crop: int | Sequence[int] | None) -> int | list[int] | None:
-    """Admission check for upstream's ``--crop``: one int, or one per axis."""
+    """Admission check for upstream's ``--crop``: one positive int, or one or three of them.
+
+    The source preprocessor does not check these: sizes below 1 either fail inside
+    normalization or are rounded up to a 32-voxel crop, and other lengths raise a bare
+    ``ValueError``.
+    """
 
     if crop is None:
         return None
-    message = "SynthSeg crop must be an int, a sequence of ints, or null"
+    message = "SynthSeg crop must be a positive int, one or three positive ints, or null"
     value = cast(object, crop)
     if isinstance(value, bool):
         raise InvalidInputError(message)
     if isinstance(value, int):
+        if value < 1:
+            raise InvalidInputError(message)
         return value
     if isinstance(value, str) or not isinstance(value, Sequence):
         raise InvalidInputError(message)
     items = list(cast("Sequence[object]", value))
-    if not items or any(isinstance(item, bool) or not isinstance(item, int) for item in items):
+    if len(items) not in (1, 3) or any(
+        isinstance(item, bool) or not isinstance(item, int) or item < 1 for item in items
+    ):
         raise InvalidInputError(message)
     return cast(list[int], items)
 

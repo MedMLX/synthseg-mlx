@@ -107,11 +107,6 @@ class NiftiApi(Protocol):
     ) -> ImageVolume:
         """Construct a NIfTI image from data, affine, and optional header."""
         ...
-    def Nifti2Image(
-        self, dataobj: RealArray, affine: RealArray | str, header: ImageHeader | None = None
-    ) -> ImageVolume:
-        """Construct a NIfTI-2 image from data, affine, and optional header."""
-        ...
     def save(self, img: ImageVolume, filename: str) -> None:
         """Write a NIfTI image to a path."""
         ...
