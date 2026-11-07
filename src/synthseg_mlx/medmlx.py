@@ -54,6 +54,8 @@ MODEL = {
     "label": "SynthSeg 2.0",
     "task": "segmentation",
     "run": "synthseg_mlx.medmlx:run",
+    # Measured MLX peak for a 160x192x192 T1 MRI with parcellation; larger inputs need more.
+    "peak_memory_gb": 11.6,
     "summary": (
         "Brain MRI (or CT in Hounsfield units) segmentation with cortical parcellation, "
         "regional volumes and QC scores."

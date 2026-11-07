@@ -21,6 +21,8 @@ Segment brain MRI or CT with SynthSeg in native MLX. Includes cortical parcellat
 | :--- | :--- |
 | 3D brain MRI or CT · NIfTI | Brain labels, volumes and QC |
 
+Weights: 424 MB download. Peak MLX memory: 11.6 GB for a 160×192×192 T1 MRI with cortical parcellation.
+
 ## Use with MedMLX
 
 The [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) is the lowest-friction way to use this model. It installs this runtime, downloads its weights on first use, and lets an AI agent describe, check and run `synthseg` for you.
