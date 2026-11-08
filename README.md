@@ -25,7 +25,7 @@ Weights: 424 MB download. Peak MLX memory: 11.6 GB for a 160×192×192 T1 MRI wi
 
 ## Use with MedMLX
 
-The [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) is the lowest-friction way to use this model. It installs this runtime, downloads its weights on first use, and lets an AI agent describe, check and run `synthseg` for you.
+Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `synthseg` from an MCP client. Weights download on first use.
 
 ```sh
 uv tool install --python 3.13 "medmlx[segment,mcp]"
@@ -35,8 +35,6 @@ claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
 ```
 
 For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe synthseg`.
-
-> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
 
 ## Install
 
@@ -56,11 +54,10 @@ print(result["outputs"]["mask"])
 ```
 
 Omitting `weights_path` downloads `MedMLX/synthseg-mlx` into the shared MedMLX cache on
-first use; interrupted downloads resume and later runs work offline. With MedMLX
+first use. With MedMLX
 installed, `medmlx setup synthseg` downloads it ahead of time. To use your own copy,
 pass a folder containing `synthseg_2.0.safetensors`, `synthseg_parc_2.0.safetensors` and
-`synthseg_qc_2.0.safetensors` as `weights_path`. `details.weights_revision` records the
-downloaded commit, or `null` for a folder without a MedMLX download record.
+`synthseg_qc_2.0.safetensors` as `weights_path`.
 
 Inputs are resampled to 1 mm if any voxel size differs from 1 mm by more than
 0.05 mm; otherwise the input grid is kept. The mask shares its grid with
@@ -101,9 +98,7 @@ fewer after preprocessing.
 | `qc_scores` | `qc.csv` | Eight regional QC scores from 0 to 1 |
 | `posteriors` | `posteriors.nii.gz` | float32 per-label probabilities on the mask's grid; only with `save_posteriors=True` |
 
-`run` returns `{"outputs": {...}, "details": {...}}` with absolute output paths.
-`details` holds the labels, voxel counts, shape, affine, grid, volumes, QC scores,
-effective variant flags, MLX version and device, stage timings and peak memory.
+`run` returns `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
 Invalid images, options or existing outputs raise `InvalidInputError`; missing or
 incompatible checkpoints raise `AssetNotReadyError`.
 
@@ -180,11 +175,8 @@ Pass the same variant flags to loading, the model, postprocessing and `qc_scores
 normalization and padding; an optional `on_resample(image, affine)` hook sees the
 resampled image. `predict_numpy` takes a padded, normalized NDHWC volume whose
 spatial sizes are divisible by 16. `postprocess` keeps the upstream parameter names
-and, like upstream, modifies its parcellation input. Inference needs Apple Silicon
-with Metal and has no CPU fallback.
+and, like upstream, modifies its parcellation input. Inference requires Apple Silicon with Metal.
 
 ## License
 
 [Apache-2.0](https://github.com/MedMLX/synthseg-mlx/blob/v0.3.5/LICENSE). See [third-party notices](https://github.com/MedMLX/synthseg-mlx/blob/v0.3.5/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms.
-
-For research and education. Outputs require human review.
