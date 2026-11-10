@@ -20,7 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from synthseg_mlx._typing import (
@@ -293,6 +293,43 @@ class _PreparedImage:
     header: ImageHeader
 
 
+def _publish_outputs(staged: dict[Path, Path], *, remove: tuple[Path, ...]) -> None:
+    """Restore the prior output set when replacement or stale-file removal fails."""
+    recovery = Path(mkdtemp(prefix=".synthseg-backup-", dir=next(iter(staged)).parent))
+    cleanup = True
+    try:
+        backups: dict[Path, Path] = {}
+        for index, path in enumerate((*staged, *remove)):
+            if path.exists() or path.is_symlink():
+                backup = recovery / str(index)
+                os.link(path, backup, follow_symlinks=False)
+                backups[path] = backup
+        changed: list[Path] = []
+        try:
+            for path, temporary in staged.items():
+                os.replace(temporary, path)
+                changed.append(path)
+            for path in remove:
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+                    changed.append(path)
+        except BaseException:
+            try:
+                for path in reversed(changed):
+                    backup = backups.get(path)
+                    if backup is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, path)
+            except OSError as error:
+                cleanup = False
+                raise OSError(f"Cannot restore outputs; backups retained at {recovery}") from error
+            raise
+    finally:
+        if cleanup:
+            shutil.rmtree(recovery)
+
+
 def run(
     *,
     image_path: str | os.PathLike[str],
@@ -453,11 +490,10 @@ def run(
                 ) from exc
             raise
         details = _check_outputs(image, partial, variant=variant, save_posteriors=save_posteriors)
-        for role in written:
-            os.replace(partial[role], paths[role])
-        # Posteriors left by an earlier run would not match the new mask.
-        for role in OUTPUT_FILES.keys() - written:
-            paths[role].unlink(missing_ok=True)
+        _publish_outputs(
+            {paths[role]: partial[role] for role in written},
+            remove=tuple(paths[role] for role in OUTPUT_FILES if role not in written),
+        )
     cast(dict[str, object], details).update(
         ct=ct, runtime=runtime, duration_seconds=round(time.perf_counter() - started, 3),
         weights_revision=weights_revision(models_dir)
