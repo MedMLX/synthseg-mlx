@@ -11,8 +11,6 @@ Segment brain MRI or CT with SynthSeg in native MLX. Includes cortical parcellat
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-weights-yellow)](https://huggingface.co/MedMLX/synthseg-mlx)
 [![MedMLX](https://img.shields.io/badge/MedMLX-runtime-A51C30)](https://github.com/MedMLX/medmlx)
 
-[Model weights](https://huggingface.co/MedMLX/synthseg-mlx) · [MedMLX](https://github.com/MedMLX/medmlx)
-
 <img src="https://raw.githubusercontent.com/MedMLX/synthseg-mlx/v0.3.5/docs/example.png" alt="SynthSeg cortical parcellation in axial and coronal brain MRI" width="100%">
 
 </div>
