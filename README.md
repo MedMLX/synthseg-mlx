@@ -25,21 +25,6 @@ Segment brain MRI or CT with SynthSeg in native MLX. Includes cortical parcellat
 | :--- | ---: | ---: | :--- |
 | `synthseg` | 424 MB | 11.6 GB | 160×192×192 T1 MRI with cortical parcellation |
 
-## Use with MedMLX
-
-Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `synthseg` from an MCP client. Weights download on first use.
-
-```sh
-uv tool install --python 3.13 "medmlx[segment,mcp]"
-MEDMLX="$(uv tool dir --bin --color never)/medmlx"
-mkdir -p "$HOME/medmlx-work"
-claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
-```
-
-For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe synthseg`.
-
-> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
-
 ## Install
 
 ```bash
@@ -194,6 +179,21 @@ quality = qc_scores(raw_qc, **options)
 - `postprocess` keeps the upstream parameter names and, like upstream, modifies its
   parcellation input.
 - Inference requires Apple Silicon with Metal.
+
+## Use with MedMLX
+
+Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `synthseg` from an MCP client. Weights download on first use.
+
+```sh
+uv tool install --python 3.13 "medmlx[segment,mcp]"
+MEDMLX="$(uv tool dir --bin --color never)/medmlx"
+mkdir -p "$HOME/medmlx-work"
+claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
+```
+
+For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe synthseg`.
+
+> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
 
 ## License
 
