@@ -59,7 +59,10 @@ def test_preprocess_matches_upstream(reference_fixtures: dict[str, Recording], n
 
 
 @pytest.mark.parametrize("name", ["standard", "crop", "fast", "no_topology", "v1_no_parc"])
-def test_postprocess_matches_upstream(reference_fixtures: dict[str, Recording], name: str) -> None:
+@pytest.mark.parametrize("return_posteriors", [True, False])
+def test_postprocess_matches_upstream(
+    reference_fixtures: dict[str, Recording], name: str, return_posteriors: bool
+) -> None:
     """Compare segmentation postprocessing with recorded source outputs."""
     fixture = reference_fixtures[f"postprocess_{name}"]
     mask, posteriors, volumes = postprocess(
@@ -76,11 +79,15 @@ def test_postprocess_matches_upstream(reference_fixtures: dict[str, Recording], 
         cast(IndexArray, fixture["topology_classes"]) if fixture["topology_classes"].size else None,
         bool(fixture["v1"]),
         volume_dtype=None,
+        return_posteriors=return_posteriors,
     )
     np.testing.assert_array_equal(mask, fixture["expected_mask"])
-    np.testing.assert_allclose(
-        cast(RealArray, posteriors), fixture["expected_posteriors"], rtol=1e-6, atol=1e-7
-    )
+    if return_posteriors:
+        np.testing.assert_allclose(
+            cast(RealArray, posteriors), fixture["expected_posteriors"], rtol=1e-6, atol=1e-7
+        )
+    else:
+        assert posteriors is None
     assert_reporting_units(volumes, fixture["expected_volumes"], decimals=3)
     assert mask.dtype == np.int32
     assert mask[0, 0, 0] == 0  # The disconnected island is removed in every mode.

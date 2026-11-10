@@ -135,7 +135,8 @@ def preprocess(
 
 def postprocess(post_patch_seg: RealArray | None, post_patch_parc: RealArray | None, shape: Sequence[int], pad_idx: IndexArray, crop_idx: IndexArray | None,
                 labels_segmentation: IndexArray, labels_parcellation: IndexArray, aff: DoubleArray, im_res: RealArray, fast: bool, topology_classes: IndexArray | None, v1: bool,
-                reuse_segmentation: bool=False, volume_dtype: npt.DTypeLike | None=np.float64) -> tuple[LabelArray, RealArray | None, RealArray]:
+                reuse_segmentation: bool=False, volume_dtype: npt.DTypeLike | None=np.float64,
+                return_posteriors: bool=True) -> tuple[LabelArray, RealArray | None, RealArray]:
     """Convert network posteriors into labels, posteriors and soft volumes.
 
     Keeps the largest connected brain component, applies per-topological-class cleanup
@@ -154,6 +155,8 @@ def postprocess(post_patch_seg: RealArray | None, post_patch_parc: RealArray | N
     voxel size in mm. See ``synthseg_mlx.mlx_engine.postprocess_arrays`` for the
     copy-safe wrapper. Parcel volume normalization can produce NaNs when a hemisphere's
     parcellation posterior sum is zero; the end-to-end runner rejects non-finite tables.
+    ``return_posteriors=False`` omits the restored posterior volume and returns
+    ``None`` in its place; label and volume reporting remain unchanged.
     """
 
     # get posteriors
@@ -213,21 +216,27 @@ def postprocess(post_patch_seg: RealArray | None, post_patch_parc: RealArray | N
         seg = np.zeros(shape=shape, dtype='int32')
         seg[crop_idx[0]:crop_idx[3], crop_idx[1]:crop_idx[4], crop_idx[2]:crop_idx[5]] = seg_patch
         posteriors = None
-        if cast(RealArray | None, post_patch_seg) is not None:
+        if return_posteriors:
             posteriors = np.zeros(shape=[*shape, labels_segmentation.shape[0]])
             posteriors[..., 0] = 1
             posteriors[crop_idx[0]:crop_idx[3], crop_idx[1]:crop_idx[4], crop_idx[2]:crop_idx[5], :] = post_patch_seg
     else:
         seg = seg_patch
-        posteriors = post_patch_seg
+        posteriors = post_patch_seg if return_posteriors else None
 
     # align prediction back to first orientation
     seg = edit_volumes.align_volume_to_ref(seg, aff=np.eye(4), aff_ref=aff, n_dims=3, return_copy=False)
     if cast(RealArray | None, posteriors) is not None:
         posteriors = edit_volumes.align_volume_to_ref(cast(RealArray, posteriors), np.eye(4), aff_ref=aff, n_dims=3, return_copy=False)
 
-    # Accumulate millions of voxel probabilities without float32 rounding drift.
-    volumes = np.sum(cast(RealArray, posteriors)[..., 1:], axis=tuple(range(0, len(cast(RealArray, posteriors).shape) - 1)), dtype=volume_dtype)
+    # Background-only margins contribute no foreground volume. When not exported,
+    # reduce the oriented crop directly, retaining the old crop restoration's FP64
+    # promotion when the caller did not choose an explicit accumulator dtype.
+    volume_posteriors = posteriors
+    if volume_posteriors is None:
+        volume_posteriors = edit_volumes.align_volume_to_ref(post_patch_seg, np.eye(4), aff_ref=aff, n_dims=3, return_copy=False)
+    accumulator = np.float64 if crop_idx is not None and volume_dtype is None else volume_dtype
+    volumes = np.sum(volume_posteriors[..., 1:], axis=(0, 1, 2), dtype=accumulator)
     total_volume_cortex_left = np.sum(volumes[np.where(labels_segmentation == 3)[0] - 1])
     total_volume_cortex_right = np.sum(volumes[np.where(labels_segmentation == 42)[0] - 1])
     if not v1:
