@@ -126,9 +126,11 @@ def postprocess_arrays(
         upstream's ``return_posteriors`` flag is off. ``volumes`` are soft (posterior)
         volumes in mm^3 rounded to three decimals: total intracranial first (not for
         v1), then each non-background segmentation label, then left and right parcels
-        when parcellating, scaled to sum to each hemisphere's cortex volume. Standard
-        accumulates in float64; the other variants follow upstream's float32. A zero
-        parcellation posterior sum for a hemisphere can produce NaN parcel volumes.
+        when parcellating, scaled to sum to each hemisphere's cortex volume. Volumes
+        accumulate in float64 for Standard, and for the other variants when the input
+        was cropped (``crop_idx`` given); uncropped runs of the other variants follow
+        upstream's float32. A zero parcellation posterior sum for a hemisphere can
+        produce NaN parcel volumes.
     """
 
     variant = parse_variant(robust=robust, fast=fast, v1=v1)
