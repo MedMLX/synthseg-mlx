@@ -1,5 +1,6 @@
 """Reduced seeded graphs and complete runners against upstream TensorFlow/Keras."""
 
+import os
 from pathlib import Path
 from typing import Protocol, TypedDict, Unpack, cast
 
@@ -287,6 +288,55 @@ def test_variant_runner_uses_the_same_graph_and_processing(
     )
     quality = np.around(np.clip(fixture["runner_qc"].squeeze()[1:], 0, 1), 4)
     assert_reporting_units(list(result["details"]["qc_scores"].values()), quality, decimals=4)
+
+
+@pytest.mark.parametrize("failure", ["rename", "stale removal"])
+def test_publication_failure_restores_prior_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    fixture, model, weights, options = model_case(tmp_path, "fast")
+    reduced_runner(fixture, model, weights, monkeypatch)
+    image = tmp_path / "image.nii.gz"
+    nib.save(nib.Nifti1Image(fixture["runner_input"], fixture["runner_input_affine"]), str(image))
+    output = tmp_path / "out"
+    output.mkdir()
+    old = {output / name: name.encode() for name in medmlx.OUTPUT_FILES.values()}
+    for path, contents in old.items():
+        path.write_bytes(contents)
+
+    if failure == "rename":
+        replace = os.replace
+        failed = False
+
+        def fail_second(source: Path, destination: Path) -> None:
+            nonlocal failed
+            if destination == output / medmlx.OUTPUT_FILES["resampled_input"] and not failed:
+                failed = True
+                raise OSError("injected publication failure")
+            replace(source, destination)
+
+        monkeypatch.setattr(medmlx.os, "replace", fail_second)
+    else:
+        unlink = Path.unlink
+        failed = False
+
+        def fail_stale(path: Path, missing_ok: bool = False) -> None:
+            nonlocal failed
+            if path == output / medmlx.OUTPUT_FILES["posteriors"] and not failed:
+                failed = True
+                raise OSError("injected publication failure")
+            unlink(path, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", fail_stale)
+
+    with pytest.raises(OSError, match="injected publication failure"):
+        medmlx.run(
+            image_path=image, weights_path=tmp_path, output_dir=output,
+            overwrite=True, save_posteriors=False, **options,
+        )
+    for path, contents in old.items():
+        assert path.read_bytes() == contents
+    assert not list(output.glob(".synthseg-*"))
 
 
 @pytest.mark.parametrize("save_posteriors", [False, True])
