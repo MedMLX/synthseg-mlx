@@ -21,7 +21,9 @@ Segment brain MRI or CT with SynthSeg in native MLX. Includes cortical parcellat
 | :--- | :--- |
 | 3D brain MRI or CT · NIfTI | Brain labels, volumes and QC |
 
-Weights: 424 MB download. Peak MLX memory: 11.6 GB for a 160×192×192 T1 MRI with cortical parcellation.
+| Model | Weights download | Peak MLX memory | Measured on |
+| :--- | ---: | ---: | :--- |
+| `synthseg` | 424 MB | 11.6 GB | 160×192×192 T1 MRI with cortical parcellation |
 
 ## Use with MedMLX
 
@@ -56,10 +58,9 @@ print(result["outputs"]["mask"])
 ```
 
 Omitting `weights_path` downloads `MedMLX/synthseg-mlx` into the shared MedMLX cache on
-first use. With MedMLX
-installed, `medmlx setup synthseg` downloads it ahead of time. To use your own copy,
-pass a folder containing `synthseg_2.0.safetensors`, `synthseg_parc_2.0.safetensors` and
-`synthseg_qc_2.0.safetensors` as `weights_path`.
+first use; with MedMLX installed, `medmlx setup synthseg` downloads it ahead of time. To
+use your own copy, pass a folder containing `synthseg_2.0.safetensors`,
+`synthseg_parc_2.0.safetensors` and `synthseg_qc_2.0.safetensors` as `weights_path`.
 
 Inputs are resampled to 1 mm if any voxel size differs from 1 mm by more than
 0.05 mm; otherwise the input grid is kept. The mask shares its grid with
@@ -86,11 +87,15 @@ Upstream turns parcellation off by default; this runner turns it on. The
 parcellation network runs either way, and QC scores the same segmentation output
 with or without `parc`, unlike upstream's QC without `--parc`.
 
-Images must be finite, non-constant and 3D, with at least three voxels per axis,
-millimetre or unspecified spatial units, header voxel sizes that match the affine,
-and orthogonal axes (rotation is fine). A last axis of three voxels is rejected; four
-to ten voxels gives a warning, and padding can fail if that axis stays ten voxels or
-fewer after preprocessing.
+Images must be:
+
+- finite, non-constant and 3D, with at least three voxels per axis;
+- in millimetre or unspecified spatial units, with header voxel sizes that match the
+  affine;
+- on orthogonal axes (rotation is fine).
+
+A last axis of three voxels is rejected; four to ten voxels gives a warning, and padding
+can fail if that axis stays ten voxels or fewer after preprocessing.
 
 | Output | File | Content |
 | --- | --- | --- |
@@ -101,8 +106,11 @@ fewer after preprocessing.
 | `posteriors` | `posteriors.nii.gz` | float32 per-label probabilities on the mask's grid; only with `save_posteriors=True` |
 
 `run` returns `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
-Invalid images, options or existing outputs raise `InvalidInputError`; missing or
-incompatible checkpoints raise `AssetNotReadyError`.
+
+| Error | Raised when |
+| :--- | :--- |
+| `InvalidInputError` | Images, options or existing outputs are invalid |
+| `AssetNotReadyError` | Checkpoints are missing or incompatible |
 
 ### Local weights
 
@@ -123,9 +131,14 @@ result = run(image_path="brain.nii.gz", weights_path=weights, output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
-For `robust` use `synthseg_robust_2.0.safetensors`, and for `v1`
-`synthseg_1.0.safetensors`, in place of `synthseg_2.0.safetensors`. Every variant
-also needs the parcellation and QC files, even with `parc=False`.
+| Variant | Segmentation file |
+| :--- | :--- |
+| `robust` | `synthseg_robust_2.0.safetensors` |
+| `v1`, with or without `fast` | `synthseg_1.0.safetensors` |
+| Any other run | `synthseg_2.0.safetensors` |
+
+Every variant also needs `synthseg_parc_2.0.safetensors` and `synthseg_qc_2.0.safetensors`,
+even with `parc=False`.
 
 ### Python API
 
@@ -172,12 +185,15 @@ label_map, posteriors, volumes = postprocess_arrays(
 quality = qc_scores(raw_qc, **options)
 ```
 
-Pass the same variant flags to loading, the model, postprocessing and `qc_scores`.
-`preprocess` keeps upstream resampling, RAS alignment, cropping, CT clipping,
-normalization and padding; an optional `on_resample(image, affine)` hook sees the
-resampled image. `predict_numpy` takes a padded, normalized NDHWC volume whose
-spatial sizes are divisible by 16. `postprocess` keeps the upstream parameter names
-and, like upstream, modifies its parcellation input. Inference requires Apple Silicon with Metal.
+- Pass the same variant flags to loading, the model, postprocessing and `qc_scores`.
+- `preprocess` keeps upstream resampling, RAS alignment, cropping, CT clipping,
+  normalization and padding. An optional `on_resample(image, affine)` hook sees the
+  resampled image.
+- `predict_numpy` takes a padded, normalized NDHWC volume whose spatial sizes are
+  divisible by 16.
+- `postprocess` keeps the upstream parameter names and, like upstream, modifies its
+  parcellation input.
+- Inference requires Apple Silicon with Metal.
 
 ## License
 
