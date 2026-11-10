@@ -24,6 +24,8 @@ def test_upstream_labels_and_postprocessing(name: str) -> None:
     assert ("total intracranial" in labels.volume_names) is (not variant.v1)
     if variant.robust:
         assert np.array_equal(medmlx.denoiser_labels(), fixture["labels_denoiser"])
+    original_segmentation = fixture["segmentation"].copy()
+    original_parcellation = fixture["parcellation"].copy()
     actual = postprocess_arrays(
         fixture["segmentation"],
         fixture["parcellation"],
@@ -39,6 +41,8 @@ def test_upstream_labels_and_postprocessing(name: str) -> None:
         fast=variant.fast,
         v1=variant.v1,
     )
+    np.testing.assert_array_equal(fixture["segmentation"], original_segmentation)
+    np.testing.assert_array_equal(fixture["parcellation"], original_parcellation)
     for field, value in zip(("mask", "posteriors", "volumes"), actual, strict=True):
         assert cast(RealArray, value).dtype == fixture[field].dtype
         if field == "mask":

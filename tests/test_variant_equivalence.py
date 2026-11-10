@@ -52,6 +52,7 @@ class LoaderOptions(Flags):
     sigma: float
     qc_shape: int
     labels_denoiser: IndexArray | None
+    parc: bool
 
 
 class SafeTensorWriter(Protocol):
@@ -66,7 +67,9 @@ nib = cast(NiftiApi, nib_runtime)
 type ModelCase = tuple[Recording, SynthSegModel, list[Path], Flags]
 
 
-def model_case(directory: Path, name: str) -> tuple[Recording, SynthSegModel, list[Path], Flags]:
+def model_case(
+    directory: Path, name: str, *, parc: bool = True
+) -> tuple[Recording, SynthSegModel, list[Path], Flags]:
     """Construct a reduced fixture model and checkpoint paths for a variant."""
     fixture = load_variant(name)
     paths = write_weights(directory, fixture)
@@ -83,6 +86,7 @@ def model_case(directory: Path, name: str) -> tuple[Recording, SynthSegModel, li
         features=int(fixture["features"]),
         denoiser_features=int(fixture["denoiser_features"]),
         qc_shape=int(fixture["qc_shape"]),
+        parc=parc,
         **options,
     )
     return fixture, model, paths, options
@@ -119,10 +123,11 @@ def test_variant_graph_matches_tensorflow(variant_case: ModelCase) -> None:
     fixture, model, _, options = variant_case
     predictions = predict_numpy(model, fixture["input"])
     whole_graph = model(cast(NativeArrayApi, mx).array(fixture["input"]))
-    cast(NativeArrayApi, mx).eval(*whole_graph)
+    cast(NativeArrayApi, mx).eval(*(value for value in whole_graph if value is not None))
     for field, actual, unstaged in zip(
         ("segmentation", "parcellation", "qc"), predictions, whole_graph, strict=True
     ):
+        assert actual is not None and unstaged is not None
         assert actual.dtype == fixture[field].dtype
         np.testing.assert_allclose(
             actual, cast(RealArray, fixture[field]), rtol=1e-5, atol=1e-6, err_msg=field
@@ -182,7 +187,9 @@ def reduced_runner(
         return original_preprocess(*args, n_levels=4, **kwargs)
 
     def small_model(
-        *args: *tuple[Path, IndexArray, Path, IndexArray, Path, IndexArray, IndexArray | None],
+        *args: *tuple[
+            Path, IndexArray, Path | None, IndexArray, Path, IndexArray, IndexArray | None
+        ],
         **kwargs: Unpack[LoaderOptions],
     ) -> SynthSegModel:
         """Load the selected model using reduced fixture feature counts."""
@@ -282,9 +289,11 @@ def test_variant_runner_uses_the_same_graph_and_processing(
     assert_reporting_units(list(result["details"]["qc_scores"].values()), quality, decimals=4)
 
 
+@pytest.mark.parametrize("save_posteriors", [False, True])
 def test_variant_runner_supports_crop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    save_posteriors: bool,
 ) -> None:
     """``crop`` matches upstream's ``--crop``: it also becomes the minimum pad."""
 
@@ -300,9 +309,11 @@ def test_variant_runner_supports_crop(
         weights_path=tmp_path,
         output_dir=tmp_path / "out",
         crop=16,
+        save_posteriors=save_posteriors,
         **options,
     )
     assert_runner_files(result, fixture, prefix="crop_")
+    assert ("posteriors" in result["outputs"]) is save_posteriors
     assert_reporting_units(
         list(result["details"]["volumes_mm3"].values()), fixture["crop_runner_volumes"], decimals=3
     )
@@ -323,3 +334,41 @@ def test_ct_runner_matches_upstream(
         image_path=image, weights_path=tmp_path, output_dir=tmp_path / "out", ct=True, **options
     )
     assert_runner_files(result, fixture, ct=True)
+
+
+def test_runner_without_parcellation_needs_only_segmentation_and_qc(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run segmentation and QC without loading a parcellation checkpoint."""
+    fixture, model, weights, options = model_case(tmp_path, "fast")
+    reduced_runner(fixture, model, weights, monkeypatch)
+    weights[1].unlink()
+    image = tmp_path / "image.nii.gz"
+    nib.save(nib.Nifti1Image(fixture["runner_input"], fixture["runner_input_affine"]), str(image))
+    result = medmlx.run(
+        image_path=image,
+        weights_path=tmp_path,
+        output_dir=tmp_path / "out",
+        parc=False,
+        **options,
+    )
+    mask = cast(IndexArray, np.asanyarray(nib.load(result["outputs"]["mask"]).dataobj))
+    assert np.isin(mask, fixture["labels_segmentation"]).all()
+    assert set(result["details"]["volumes_mm3"]) == set(
+        medmlx.select_labels(model.variant, parc=False).volume_names[1:]
+    )
+    quality = np.around(np.clip(fixture["runner_qc"].squeeze()[1:], 0, 1), 4)
+    assert_reporting_units(list(result["details"]["qc_scores"].values()), quality, decimals=4)
+
+
+@pytest.mark.parametrize("name", ["standard", "fast", "robust", "v1", "v1_fast"])
+def test_segmentation_and_qc_without_parcellation(tmp_path: Path, name: str) -> None:
+    """Omitting parcellation preserves the recorded segmentation and QC predictions."""
+    fixture, model, _, _ = model_case(tmp_path, name, parc=False)
+    segmentation, parcellation, quality = predict_numpy(model, fixture["input"])
+    assert parcellation is None
+    for actual, field in ((segmentation, "segmentation"), (quality, "qc")):
+        np.testing.assert_allclose(
+            actual, cast(RealArray, fixture[field]), rtol=1e-5, atol=1e-6, err_msg=field
+        )

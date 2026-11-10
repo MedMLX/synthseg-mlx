@@ -326,8 +326,8 @@ def run(
             or unspecified (assumed mm), header spacing must match the affine, and
             the grid axes must be orthogonal.
         weights_path: Optional local directory with the selected segmentation
-            checkpoint and the 2.0 parcellation and QC checkpoints, even with
-            ``parc=False``. All three must be native ``.safetensors`` files.
+            checkpoint and the 2.0 QC checkpoint, plus the 2.0 parcellation checkpoint
+            when ``parc=True``. All checkpoints must be native ``.safetensors`` files.
             Omit to download and reuse the MedMLX/synthseg-mlx bundle automatically.
         output_dir: Directory for the outputs; created if missing.
         ct: Clip intensities to [0, 80] before normalization, for CT input.
@@ -422,7 +422,7 @@ def run(
 
     models_dir = (weights_dir("synthseg") if weights_path is None
                   else Path(weights_path).expanduser())
-    _require_weight_files(models_dir, variant)
+    _require_weight_files(models_dir, variant, parc=parc)
     output.mkdir(parents=True, exist_ok=True)
 
     # Stage privately because the CSV and image writers follow links when opening paths.
@@ -503,7 +503,9 @@ def _validate_crop(crop: int | Sequence[int] | None) -> int | list[int] | None:
     return cast(list[int], items)
 
 
-def _require_weight_files(models_dir: Path, variant: SynthSegVariant) -> None:
+def _require_weight_files(
+    models_dir: Path, variant: SynthSegVariant, *, parc: bool = True
+) -> None:
     """Raise ``AssetNotReadyError`` unless the directory holds the variant's checkpoints."""
 
     from synthseg_mlx.pinned_weights import checkpoint_paths
@@ -511,12 +513,15 @@ def _require_weight_files(models_dir: Path, variant: SynthSegVariant) -> None:
     if not models_dir.is_dir():
         raise AssetNotReadyError(
             f"SynthSeg weights directory not found: {models_dir}; expected a directory holding "
-            + ", ".join(variant.checkpoints),
+            + ", ".join(
+                name for name in variant.checkpoints
+                if parc or name != "synthseg_parc_2.0.safetensors"
+            ),
             reason=f"missing {models_dir}",
             hint=_WEIGHTS_HINT,
         )
     try:
-        checkpoint_paths(models_dir, variant)
+        checkpoint_paths(models_dir, variant, parc=parc)
     except ValueError as exc:
         raise AssetNotReadyError(
             f"SynthSeg weights directory {models_dir}: {exc}",
@@ -604,7 +609,9 @@ def _execute(
     prepared = _prepare_image(image, paths["resampled_input"], ct=ct, crop=crop)
     preprocessing_seconds = time.perf_counter() - prepared_started
     loaded_started = time.perf_counter()
-    model = _load_model(models_dir, labels, variant, arithmetic_profile=arithmetic_profile)
+    model = _load_model(
+        models_dir, labels, variant, parc=parc, arithmetic_profile=arithmetic_profile
+    )
     model_load_seconds = time.perf_counter() - loaded_started
     _write_tables(paths, labels, variant)
     network_started = time.perf_counter()
@@ -621,7 +628,10 @@ def _execute(
         "numpy": np.__version__,
         "precision": "float32",
         "arithmetic_profile": arithmetic_profile,
-        "volume_accumulator": "float64" if variant is SynthSegVariant.STANDARD else "float32",
+        "volume_accumulator": (
+            "float64" if variant is SynthSegVariant.STANDARD or prepared.crop_indices is not None
+            else "float32"
+        ),
         "source_revision": (
             SYNTHSEG_REVISION if variant is SynthSegVariant.STANDARD else UPSTREAM_REVISION
         ),
@@ -667,6 +677,7 @@ def _load_model(
     labels: LabelSelection,
     variant: SynthSegVariant,
     *,
+    parc: bool = True,
     arithmetic_profile: ArithmeticProfile = "source-fp32",
 ) -> SynthSegModel:
     """Build the model from the variant's checkpoints; bad weights raise ``AssetNotReadyError``."""
@@ -676,14 +687,14 @@ def _load_model(
 
     options = dict(robust=variant.robust, fast=variant.fast, v1=variant.v1)
     try:
-        models = checkpoint_paths(models_dir, variant)
+        models = checkpoint_paths(models_dir, variant, parc=parc)
     except ValueError as exc:
         raise AssetNotReadyError(str(exc), reason=str(exc), hint=_WEIGHTS_HINT) from exc
     try:
         return SynthSegModel.from_safetensors(
             models[variant.segmentation_checkpoint],
             labels.segmentation,
-            models["synthseg_parc_2.0.safetensors"],
+            models.get("synthseg_parc_2.0.safetensors"),
             labels.parcellation,
             models["synthseg_qc_2.0.safetensors"],
             labels.qc,
@@ -692,6 +703,7 @@ def _load_model(
             qc_shape=_QC_SHAPE,
             labels_denoiser=denoiser_labels() if variant.robust else None,
             arithmetic_profile=arithmetic_profile,
+            parc=parc,
             **options,
         )
     except (ModelExecutionError, OSError) as exc:
@@ -732,7 +744,7 @@ def _write_prediction(
     paths: dict[str, Path],
     prepared: _PreparedImage,
     labels: LabelSelection,
-    predictions: tuple[FloatArray, FloatArray, FloatArray],
+    predictions: tuple[FloatArray, FloatArray | None, FloatArray],
     variant: SynthSegVariant,
     parc: bool = True,
     posteriors_path: Path | None = None,
@@ -740,11 +752,13 @@ def _write_prediction(
     """Postprocess the network outputs and write the mask, optional posteriors and tables."""
 
     from synthseg_mlx._lab2im import utils
-    from synthseg_mlx.mlx_engine import postprocess_arrays, qc_scores
+    from synthseg_mlx.mlx_engine import qc_scores
+    from synthseg_mlx.processing import postprocess
 
     options = dict(robust=variant.robust, fast=variant.fast, v1=variant.v1)
     segmentation, parcellation, quality = predictions
-    mask, posteriors, volumes = postprocess_arrays(
+    # predict_numpy returned owned host buffers; consume them without copying again.
+    mask, posteriors, volumes = postprocess(
         segmentation,
         parcellation if parc else None,
         shape=prepared.shape,
@@ -752,10 +766,14 @@ def _write_prediction(
         crop_idx=prepared.crop_indices,
         labels_segmentation=labels.segmentation,
         labels_parcellation=labels.parcellation,
-        affine=prepared.affine,
-        image_resolution=prepared.resolution,
+        aff=prepared.affine,
+        im_res=prepared.resolution,
         topology_classes=labels.topology_classes,
-        **options,
+        fast=variant.fast,
+        v1=variant.v1,
+        reuse_segmentation=True,
+        volume_dtype=np.float64 if variant is SynthSegVariant.STANDARD else None,
+        return_posteriors=posteriors_path is not None,
     )
     utils.save_volume(mask, prepared.affine, prepared.header, str(paths["mask"]), dtype="int32")
     if posteriors_path is not None:

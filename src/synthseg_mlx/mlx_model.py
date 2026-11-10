@@ -647,6 +647,8 @@ class SynthSegModel(nn.Module):
     fast) maps each segmentation channel to its left/right counterpart. ``sigma`` is
     the Gaussian smoothing (voxels) used in the segmentation path; the robust path
     returns its unsmoothed prediction. ``qc_shape`` is the QC crop size in voxels.
+    With ``parc=False``, no parcellation network is constructed or loaded and its
+    output is ``None``; segmentation and QC retain the same arithmetic.
     """
 
     def __init__(
@@ -661,6 +663,7 @@ class SynthSegModel(nn.Module):
         robust: bool = False,
         fast: bool = False,
         v1: bool = False,
+        parc: bool = True,
         labels_denoiser: IndexArray | None = None,
         features: int = 24,
         denoiser_features: int = 16,
@@ -701,12 +704,15 @@ class SynthSegModel(nn.Module):
                 features=features,
                 accuracy_ops=self._accuracy_ops,
             )
-        self.parcellation = UNet(
-            3,
-            len(labels_parcellation),
-            "unet_parc",
-            features=features,
-            accuracy_ops=self._accuracy_ops,
+        self.parcellation = (
+            UNet(
+                3,
+                len(labels_parcellation),
+                "unet_parc",
+                features=features,
+                accuracy_ops=self._accuracy_ops,
+            )
+            if parc else None
         )
         self.qc = QCNet(len(np.unique(labels_qc)), features=features)
         if not self.variant.fast and flip_indices is None:
@@ -732,7 +738,7 @@ class SynthSegModel(nn.Module):
         cls,
         path_segmentation: str | Path,
         labels_segmentation: IndexArray,
-        path_parcellation: str | Path,
+        path_parcellation: str | Path | None,
         labels_parcellation: IndexArray,
         path_qc: str | Path,
         labels_qc: IndexArray,
@@ -743,12 +749,13 @@ class SynthSegModel(nn.Module):
         robust: bool = False,
         fast: bool = False,
         v1: bool = False,
+        parc: bool = True,
         labels_denoiser: IndexArray | None = None,
         features: int = 24,
         denoiser_features: int = 16,
         arithmetic_profile: ArithmeticProfile = "source-fp32",
     ) -> SynthSegModel:
-        """Construct the graph from three native MLX safetensors files."""
+        """Load native safetensors; parcellation is optional when ``parc=False``."""
 
         model = cls(
             labels_segmentation,
@@ -760,6 +767,7 @@ class SynthSegModel(nn.Module):
             robust=robust,
             fast=fast,
             v1=v1,
+            parc=parc,
             labels_denoiser=labels_denoiser,
             features=features,
             denoiser_features=denoiser_features,
@@ -771,12 +779,15 @@ class SynthSegModel(nn.Module):
     def load_safetensors(
         self,
         path_segmentation: str | Path,
-        path_parcellation: str | Path,
+        path_parcellation: str | Path | None,
         path_qc: str | Path,
     ) -> None:
-        """Load all three native MLX networks from finite float32 safetensors files."""
+        """Load the enabled native networks from finite float32 safetensors files."""
         load_safetensors(self.segmentation, path_segmentation)
-        load_safetensors(self.parcellation, path_parcellation)
+        if self.parcellation is not None:
+            if path_parcellation is None:
+                raise ModelExecutionError("SynthSeg parcellation requires its checkpoint")
+            load_safetensors(self.parcellation, path_parcellation)
         load_safetensors(self.qc, path_qc)
         self.eval()
         cast(NativeArrayApi, mx).eval(self.parameters())
@@ -804,12 +815,12 @@ class SynthSegModel(nn.Module):
             stream=mx.gpu,
         )[0]
 
-    def __call__(self, image: NativeArray) -> tuple[NativeArray, NativeArray, NativeArray]:
+    def __call__(self, image: NativeArray) -> tuple[NativeArray, NativeArray | None, NativeArray]:
         """Build the lazy segmentation, parcellation and QC graph without evaluating it."""
 
         return self._forward(image, bounded=False)
 
-    def predict(self, image: NativeArray) -> tuple[NativeArray, NativeArray, NativeArray]:
+    def predict(self, image: NativeArray) -> tuple[NativeArray, NativeArray | None, NativeArray]:
         """Evaluate the same graph one stage at a time and return evaluated outputs.
 
         Metal can keep an evaluation's temporary buffers until its command buffer
@@ -840,19 +851,23 @@ class SynthSegModel(nn.Module):
 
     def _forward(
         self, image: NativeArray, *, bounded: bool
-    ) -> tuple[NativeArray, NativeArray, NativeArray]:
+    ) -> tuple[NativeArray, NativeArray | None, NativeArray]:
         """Compute segmentation, parcellation, and QC outputs for one native volume."""
         if image.ndim != 5 or image.shape[-1] != 1 or image.dtype != mx.float32:
             raise ModelExecutionError("SynthSeg MLX expects a float32 NDHWC single-channel volume")
         settle = _evaluate if bounded else _defer
         segmentation, cortex_prediction = self.segmentation_predictions(image, bounded=bounded)
-        segmentation, cortex_prediction = settle(segmentation), settle(cortex_prediction)
+        segmentation = settle(segmentation)
+        if self.parcellation is not None:
+            cortex_prediction = settle(cortex_prediction)
         indices = mx.argmax(segmentation, axis=-1)
 
         cropped = mx.stack([crop_for_qc(item, self.qc_shape) for item in indices])
         qc_indices = self.qc_labels[cropped]
         qc = settle(self.qc.score_indices(qc_indices))
 
+        if self.parcellation is None:
+            return segmentation, None, qc
         cortex = self.cortex_labels[mx.argmax(cortex_prediction, axis=-1)]
         parcellation_input = mx.concatenate(
             [
@@ -873,7 +888,8 @@ class SynthSegModel(nn.Module):
         ``segmentation`` is what is reported and fed to QC; ``cortex_prediction`` is the
         copy whose argmax picks the cortex voxels that condition the parcellation network.
         They differ only for fast non-robust variants, where the cortex input is the
-        smoothed prediction and the reported one is raw. Non-fast variants average the
+        smoothed prediction when parcellation is enabled and the reported one is raw.
+        Non-fast variants average the
         image's and its left-right flipped pass.
         """
 
@@ -884,7 +900,10 @@ class SynthSegModel(nn.Module):
         if self.variant.fast:
             # Upstream retrieves unet_prediction for segmentation/QC, while the
             # cortex input to parcellation comes from the smoothed prediction.
-            return segmentation, self.blur(segmentation)
+            return (
+                segmentation,
+                self.blur(segmentation) if self.parcellation is not None else segmentation,
+            )
         # The first pass is stored before the flipped pass is built.
         segmentation = settle(segmentation)
         # Flip augmentation: axis 1 of NDHWC is the first spatial axis, left-right after

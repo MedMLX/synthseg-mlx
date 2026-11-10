@@ -44,6 +44,7 @@ Omitting `weights_path` downloads `MedMLX/synthseg-mlx` into the shared MedMLX c
 first use; with MedMLX installed, `medmlx setup synthseg` downloads it ahead of time. To
 use your own copy, pass a folder containing `synthseg_2.0.safetensors`,
 `synthseg_parc_2.0.safetensors` and `synthseg_qc_2.0.safetensors` as `weights_path`.
+With `parc=False`, the parcellation checkpoint is not needed.
 
 Inputs are resampled to 1 mm if any voxel size differs from 1 mm by more than
 0.05 mm; otherwise the input grid is kept. The mask shares its grid with
@@ -66,9 +67,9 @@ Inputs are resampled to 1 mm if any voxel size differs from 1 mm by more than
 | `overwrite` | `False` by default; existing outputs are never replaced |
 | `arithmetic_profile` | `"source-fp32"` (default) keeps each variant's arithmetic; `"compensated-fp32"` uses compensated Metal operators for the standard model and smooths each prediction before averaging |
 
-Upstream turns parcellation off by default; this runner turns it on. The
-parcellation network runs either way, and QC scores the same segmentation output
-with or without `parc`, unlike upstream's QC without `--parc`.
+Upstream turns parcellation off by default; this runner turns it on. `parc=False`
+skips loading and running the parcellation network. QC scores the same segmentation
+output with or without `parc`, unlike upstream's QC without `--parc`.
 
 Images must be:
 
@@ -120,8 +121,8 @@ print(result["outputs"]["mask"])
 | `v1`, with or without `fast` | `synthseg_1.0.safetensors` |
 | Any other run | `synthseg_2.0.safetensors` |
 
-Every variant also needs `synthseg_parc_2.0.safetensors` and `synthseg_qc_2.0.safetensors`,
-even with `parc=False`.
+Every variant also needs `synthseg_qc_2.0.safetensors`; `synthseg_parc_2.0.safetensors`
+is needed only with `parc=True`.
 
 ### Python API
 

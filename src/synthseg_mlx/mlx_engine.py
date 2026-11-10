@@ -40,8 +40,8 @@ def prepare_network_input(image: RealArray) -> NativeArray:
 
 def predict_numpy(
     model: SynthSegModel, image: RealArray
-) -> tuple[FloatArray, FloatArray, FloatArray]:
-    """Run all three graphs and return segmentation/parcellation posteriors and QC.
+) -> tuple[FloatArray, FloatArray | None, FloatArray]:
+    """Run the enabled graphs and return segmentation/parcellation posteriors and QC.
 
     ``image`` is the source-preprocessed, padded NDHWC single-channel volume
     ``(1, D, H, W, 1)`` from ``preprocess``: intensities rescaled to [0, 1], RAS axis
@@ -55,6 +55,7 @@ def predict_numpy(
         label list given to the model, background first; ``parcellation`` is
         ``(1, D, H, W, n_parcellation_labels)``; ``qc`` is ``(1, n_qc_classes)`` raw
         regional scores for ``qc_scores``. Spatial axes are those of the padded input.
+        The parcellation result is ``None`` when the model was built with ``parc=False``.
 
     Raises:
         ModelExecutionError: If ``image`` is not a single-channel NDHWC volume, or its
@@ -66,10 +67,12 @@ def predict_numpy(
 
     network_input = prepare_network_input(image)
     segmentation, parcellation, qc_score = model.predict(network_input)
-    cast(NativeArrayApi, mlxc).eval(segmentation, parcellation, qc_score)
+    cast(NativeArrayApi, mlxc).eval(segmentation, qc_score)
+    if parcellation is not None:
+        cast(NativeArrayApi, mlxc).eval(parcellation)
     return (
         cast(FloatArray, np.array(segmentation)),
-        cast(FloatArray, np.array(parcellation)),
+        cast(FloatArray, np.array(parcellation)) if parcellation is not None else None,
         cast(FloatArray, np.array(qc_score)),
     )
 
