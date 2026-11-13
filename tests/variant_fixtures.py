@@ -1,9 +1,9 @@
 """Read TensorFlow recordings and reconstruct their small native MLX weights."""
 
-import json
+import os
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 import mlx.core as mx
 import numpy as np
@@ -17,6 +17,7 @@ class SafeTensorWriter(Protocol):
         """Write named native arrays as a safetensors file."""
         ...
 
+
 FIXTURES = Path(__file__).parent / "fixtures" / "variants"
 
 
@@ -24,6 +25,15 @@ def load_recording(path: Path) -> Recording:
     """Load one recorded fixture archive without pickle."""
     with np.load(path, allow_pickle=False) as payload:
         fixture = dict(payload)
+    if (path.parent.name == "processing" and path.stem.startswith("preprocess_")) or (
+        path.parent.name == "variants"
+    ):
+        default = Path(__file__).resolve().parents[1] / "work/real-reference"
+        directory = Path(os.environ.get("MEDMLX_TEST_REFERENCES", str(default)))
+        if path.parent.name == "variants":
+            directory /= "variants"
+        with np.load(directory / path.name, allow_pickle=False) as payload:
+            fixture.update(dict(payload))
     assert fixture["reference_host"].item() == "darwin-arm64"
     assert fixture["synthseg_commit"].item() == "2a2aa3bbfccb83f8253a51ca8b329b9938a2646d"
     return cast(Recording, fixture)
@@ -34,13 +44,13 @@ def load_variant(name: str) -> Recording:
     return load_recording(FIXTURES / f"{name}.npz")
 
 
-def load_standard_volume_reference() -> DoubleArray:
-    """Read original-fork float64 reporting of the unchanged TF probabilities."""
-    path = FIXTURES.parent / "reporting" / "standard_float64.json"
-    reference = cast(dict[str, object], json.loads(path.read_text()))
-    assert reference["source_revision"] == "d6a64db19ec7b8b71c64edd59e7e485e0235c26c"
-    volumes = np.asarray(cast(list[float], reference["expected_volumes"]), dtype=np.float64)
-    return cast(DoubleArray, volumes)
+def load_standard_volume_reference(kind: Literal["graph", "runner"] = "graph") -> DoubleArray:
+    """Read original-fork float64 reporting of real CT TF probabilities."""
+    default = Path(__file__).resolve().parents[1] / "work/real-reference"
+    directory = Path(os.environ.get("MEDMLX_TEST_REFERENCES", str(default)))
+    with np.load(directory / "standard_reporting.npz", allow_pickle=False) as reference:
+        assert reference["source_revision"].item() == "d6a64db19ec7b8b71c64edd59e7e485e0235c26c"
+        return cast(DoubleArray, reference[f"{kind}_volumes"])
 
 
 def assert_reporting_units(actual: object, expected: object, *, decimals: int) -> None:
@@ -95,8 +105,12 @@ def write_weights(directory: Path, fixture: Recording) -> list[Path]:
     )
     tensors: list[dict[str, mx.array]] = [{}, {}, {}]
     attributes = {
-        "kernel:0": "weight", "bias:0": "bias", "gamma:0": "weight", "beta:0": "bias",
-        "moving_mean:0": "running_mean", "moving_variance:0": "running_var",
+        "kernel:0": "weight",
+        "bias:0": "bias",
+        "gamma:0": "weight",
+        "beta:0": "bias",
+        "moving_mean:0": "running_mean",
+        "moving_variance:0": "running_var",
     }
     for layer, key, padded_shape, seed, scale, offset, boost_index, boost in rows:
         shape = tuple(int(size) for size in padded_shape if size >= 0)
@@ -109,8 +123,10 @@ def write_weights(directory: Path, fixture: Recording) -> list[Path]:
         index = 1 if layer.startswith("unet_parc") else 2 if layer.startswith("qc") else 0
         prefix = ""
         if index == 0 and fixture["robust"]:
-            prefix = "denoiser." if layer.startswith("l2l") else (
-                "fine." if layer.startswith("unet2") else "coarse."
+            prefix = (
+                "denoiser."
+                if layer.startswith("l2l")
+                else ("fine." if layer.startswith("unet2") else "coarse.")
             )
         tensors[index][f"{prefix}{layer}.{attributes[str(key)]}"] = cast(NativeArrayApi, mx).array(
             values

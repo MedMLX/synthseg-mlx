@@ -1,5 +1,6 @@
 """Runner argument rejection before any weight download, without Metal."""
 
+import os
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
@@ -37,7 +38,10 @@ def test_run_rejects_arguments_before_downloading_weights(
 
     monkeypatch.setattr(managed_weights, "weights_dir", download)
     image = tmp_path / "image.nii.gz"
-    data = np.random.default_rng(5).random((12, 13, 14)).astype(np.float32)
+    default = Path.home() / ".cache/medmlx/test-data/hcc_063_ct.nii.gz"
+    source = nib.load(os.environ.get("MEDMLX_TEST_CT", str(default)))
+    data = np.asarray(source.dataobj, dtype=np.float32)[100:112, 210:223, 55:69]
+    assert data.shape == (12, 13, 14)
     nib.save(nib.Nifti1Image(data, np.eye(4)), str(image))
     output = tmp_path / "out"
     arguments: dict[str, object] = {"image_path": image, "output_dir": output}

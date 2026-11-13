@@ -4,7 +4,7 @@ from typing import cast
 
 import numpy as np
 import pytest
-from variant_fixtures import assert_reporting_units, load_variant
+from variant_fixtures import assert_reporting_units, load_standard_volume_reference, load_variant
 
 from synthseg_mlx import medmlx, postprocess_arrays
 from synthseg_mlx._typing import IndexArray, RealArray
@@ -48,7 +48,8 @@ def test_upstream_labels_and_postprocessing(name: str) -> None:
         if field == "mask":
             np.testing.assert_array_equal(value, cast(RealArray, fixture[field]))
         elif field == "volumes":
-            assert_reporting_units(value, cast(RealArray, fixture[field]), decimals=3)
+            expected = load_standard_volume_reference() if name == "standard" else fixture[field]
+            assert_reporting_units(value, expected, decimals=3)
         else:
             np.testing.assert_allclose(
                 cast(RealArray, value), cast(RealArray, fixture[field]), rtol=1e-6, atol=1e-7

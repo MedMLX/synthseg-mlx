@@ -283,8 +283,13 @@ def test_variant_runner_uses_the_same_graph_and_processing(
         **options,
     )
     assert_runner_files(result, fixture)
+    expected_volumes = (
+        load_standard_volume_reference("runner")
+        if not options["fast"] and not options["robust"] and not options["v1"]
+        else fixture["runner_volumes"]
+    )
     assert_reporting_units(
-        list(result["details"]["volumes_mm3"].values()), fixture["runner_volumes"], decimals=3
+        list(result["details"]["volumes_mm3"].values()), expected_volumes, decimals=3
     )
     quality = np.around(np.clip(fixture["runner_qc"].squeeze()[1:], 0, 1), 4)
     assert_reporting_units(list(result["details"]["qc_scores"].values()), quality, decimals=4)
@@ -331,8 +336,12 @@ def test_publication_failure_restores_prior_outputs(
 
     with pytest.raises(OSError, match="injected publication failure"):
         medmlx.run(
-            image_path=image, weights_path=tmp_path, output_dir=output,
-            overwrite=True, save_posteriors=False, **options,
+            image_path=image,
+            weights_path=tmp_path,
+            output_dir=output,
+            overwrite=True,
+            save_posteriors=False,
+            **options,
         )
     for path, contents in old.items():
         assert path.read_bytes() == contents
