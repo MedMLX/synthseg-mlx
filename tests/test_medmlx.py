@@ -20,7 +20,7 @@ class RunArguments(TypedDict):
     image_path: Path
     output_dir: Path
     ct: NotRequired[bool]
-    arithmetic_profile: NotRequired[ArithmeticProfile]
+    precision: NotRequired[ArithmeticProfile]
 
 
 @pytest.mark.parametrize(
@@ -49,14 +49,14 @@ def test_run_rejects_arguments_before_downloading_weights(
         arguments["image_path"] = tmp_path / "image.mgz"
         (tmp_path / "image.mgz").write_bytes(b"")
     elif problem == "out-of-range":
-        arguments["arithmetic_profile"] = "fp16"
+        arguments["precision"] = "fp16"
     elif problem == "non-bool":
         arguments["ct"] = "yes"
     else:
         output.mkdir()
         (output / "mask.nii.gz").write_bytes(b"previous")
     with pytest.raises(InvalidInputError):
-        medmlx.run(**cast(RunArguments, arguments))
+        medmlx.segment(**cast(RunArguments, arguments))
 
 
 def test_declared_labels_match_the_bundled_label_map() -> None:

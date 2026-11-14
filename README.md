@@ -34,9 +34,9 @@ uv pip install "synthseg-mlx>=0.3.5"
 ## Run
 
 ```python
-from synthseg_mlx.medmlx import run
+from synthseg_mlx import segment
 
-result = run(image_path="brain.nii.gz", output_dir="out")
+result = segment(image_path="brain.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
@@ -64,8 +64,8 @@ Inputs are resampled to 1 mm if any voxel size differs from 1 mm by more than
 | `crop` | `None` by default; one or three sizes in voxels (RAS order, rounded up to multiples of 32) bounding the processed patch, as upstream `--crop`. It also replaces the 128-voxel minimum padding |
 | `parc` | `True` by default; `False` keeps plain cortex labels 3 and 42 in the mask and volumes |
 | `save_posteriors` | `False` by default; `True` also writes `posteriors.nii.gz`, as upstream `--post` |
-| `overwrite` | `False` by default; existing outputs are never replaced |
-| `arithmetic_profile` | `"source-fp32"` (default) keeps each variant's arithmetic; `"compensated-fp32"` uses compensated Metal operators for the standard model and smooths each prediction before averaging |
+| `overwrite` | `False` by default; existing outputs are replaced only when `True` |
+| `precision` | `"source-fp32"` (default) keeps each variant's arithmetic; `"compensated-fp32"` uses compensated Metal operators for the standard model and smooths each prediction before averaging |
 
 Upstream turns parcellation off by default; this runner turns it on. `parc=False`
 skips loading and running the parcellation network. QC scores the same segmentation
@@ -103,7 +103,7 @@ and run:
 
 ```python
 from huggingface_hub import snapshot_download
-from synthseg_mlx.medmlx import run
+from synthseg_mlx import segment
 
 weights = snapshot_download(
     "MedMLX/synthseg-mlx",
@@ -111,7 +111,7 @@ weights = snapshot_download(
     allow_patterns=["synthseg_2.0.safetensors", "synthseg_parc_2.0.safetensors",
                     "synthseg_qc_2.0.safetensors"],
 )
-result = run(image_path="brain.nii.gz", weights_path=weights, output_dir="out")
+result = segment(image_path="brain.nii.gz", weights_path=weights, output_dir="out")
 print(result["outputs"]["mask"])
 ```
 

@@ -16,11 +16,11 @@ import os
 import shutil
 import time
 import zlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
-from tempfile import TemporaryDirectory, mkdtemp
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from synthseg_mlx._typing import (
@@ -41,6 +41,8 @@ if TYPE_CHECKING:
 
 import numpy as np
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError, ModelExecutionError
+from medmlx_core.files import input_file, output_targets, publish
+from medmlx_core.weights import model_folder, weights_revision
 
 from synthseg_mlx.variants import (
     UPSTREAM_REVISION,
@@ -53,7 +55,7 @@ MODEL = {
     "id": "synthseg",
     "label": "SynthSeg 2.0",
     "task": "segmentation",
-    "run": "synthseg_mlx.medmlx:run",
+    "run": "synthseg_mlx.medmlx:segment",
     # Measured MLX peak for a 160x192x192 T1 MRI with parcellation; larger inputs need more.
     "peak_memory_gb": 11.6,
     "summary": (
@@ -251,7 +253,7 @@ class RunDetails(OutputDetails):
 
 
 class RunResult(TypedDict):
-    """Return value of ``run``: output file paths by role, and the run details."""
+    """Return value of ``segment``: output file paths by role, and the run details."""
 
     outputs: dict[str, str]
     details: RunDetails
@@ -293,44 +295,12 @@ class _PreparedImage:
     header: ImageHeader
 
 
-def _publish_outputs(staged: dict[Path, Path], *, remove: tuple[Path, ...]) -> None:
-    """Restore the prior output set when replacement or stale-file removal fails."""
-    recovery = Path(mkdtemp(prefix=".synthseg-backup-", dir=next(iter(staged)).parent))
-    cleanup = True
-    try:
-        backups: dict[Path, Path] = {}
-        for index, path in enumerate((*staged, *remove)):
-            if path.exists() or path.is_symlink():
-                backup = recovery / str(index)
-                os.link(path, backup, follow_symlinks=False)
-                backups[path] = backup
-        changed: list[Path] = []
-        try:
-            for path, temporary in staged.items():
-                os.replace(temporary, path)
-                changed.append(path)
-            for path in remove:
-                if path.exists() or path.is_symlink():
-                    path.unlink()
-                    changed.append(path)
-        except BaseException:
-            try:
-                for path in reversed(changed):
-                    backup = backups.get(path)
-                    if backup is None:
-                        path.unlink(missing_ok=True)
-                    else:
-                        os.replace(backup, path)
-            except OSError as error:
-                cleanup = False
-                raise OSError(f"Cannot restore outputs; backups retained at {recovery}") from error
-            raise
-    finally:
-        if cleanup:
-            shutil.rmtree(recovery)
+def _move_from(staged: Path) -> Callable[[Path], None]:
+    """Return a ``publish`` writer that moves an already checked file into place."""
+    return lambda target: os.replace(staged, target)
 
 
-def run(
+def segment(
     *,
     image_path: str | os.PathLike[str],
     weights_path: str | os.PathLike[str] | None = None,
@@ -343,7 +313,7 @@ def run(
     parc: bool = True,
     save_posteriors: bool = False,
     overwrite: bool = False,
-    arithmetic_profile: ArithmeticProfile = "source-fp32",
+    precision: ArithmeticProfile = "source-fp32",
 ) -> RunResult:
     """Segment one 3D brain NIfTI with SynthSeg, optionally parcellate cortex, and score QC.
 
@@ -362,7 +332,7 @@ def run(
             or a CT in Hounsfield units when ``ct`` is true. Spatial units must be mm
             or unspecified (assumed mm), header spacing must match the affine, and
             the grid axes must be orthogonal.
-        weights_path: Optional local directory with the selected segmentation
+        weights_path: Optional local folder with the selected segmentation
             checkpoint and the 2.0 QC checkpoint, plus the 2.0 parcellation checkpoint
             when ``parc=True``. All checkpoints must be native ``.safetensors`` files.
             Omit to download and reuse the MedMLX/synthseg-mlx bundle automatically.
@@ -386,8 +356,9 @@ def run(
             channels in sorted unique segmentation-label order, background first,
             on the mask's grid. ``details.labels`` also includes parcellation labels.
         overwrite: Replace existing outputs once the run succeeds; a failed run keeps
-            them. Input/output aliases are always refused.
-        arithmetic_profile: ``source-fp32`` (default) keeps each variant's arithmetic.
+            them. Input/output aliases are always refused. A rerun also removes a
+            ``posteriors.nii.gz`` it does not write.
+        precision: ``source-fp32`` (default) keeps each variant's arithmetic.
             ``compensated-fp32`` is limited to the standard 2.0 graph and uses
             compensated Metal operators for segmentation/parcellation convolution,
             normalization, ELU, softmax and smoothing. It smooths each segmentation
@@ -418,9 +389,9 @@ def run(
 
     started = time.perf_counter()
     variant = parse_variant(robust=robust, fast=fast, v1=v1)
-    if arithmetic_profile not in {"source-fp32", "compensated-fp32"}:
-        raise InvalidInputError(f"Unknown SynthSeg arithmetic profile {arithmetic_profile!r}")
-    if arithmetic_profile == "compensated-fp32" and variant is not SynthSegVariant.STANDARD:
+    if precision not in {"source-fp32", "compensated-fp32"}:
+        raise InvalidInputError(f"Unknown SynthSeg precision {precision!r}")
+    if precision == "compensated-fp32" and variant is not SynthSegVariant.STANDARD:
         raise InvalidInputError("Compensated SynthSeg supports the standard 2.0 graph")
     if not isinstance(cast(object, ct), bool):
         raise InvalidInputError("SynthSeg ct must be true or false")
@@ -428,37 +399,16 @@ def run(
         raise InvalidInputError("SynthSeg parc must be true or false")
     if not isinstance(cast(object, save_posteriors), bool):
         raise InvalidInputError("SynthSeg save_posteriors must be true or false")
-    if not isinstance(cast(object, overwrite), bool):
-        raise InvalidInputError("SynthSeg overwrite must be true or false")
     crop = _validate_crop(crop)
     # Absolute but unresolved, so a link keeps its .nii/.nii.gz name.
-    image = Path(image_path).expanduser().absolute()
-    if not image.is_file():
-        raise InvalidInputError(f"SynthSeg input image does not exist: {image}")
+    image = input_file("image_path", image_path).absolute()
     if not image.name.endswith((".nii", ".nii.gz")):
         raise InvalidInputError("SynthSeg input must be a .nii or .nii.gz file")
-    output = Path(output_dir).expanduser().absolute()
-    if output.exists() and not output.is_dir():
-        raise InvalidInputError(f"SynthSeg output_dir is not a directory: {output}")
-    paths = {role: output / name for role, name in OUTPUT_FILES.items()}
-    if any(
-        path.resolve() == image.resolve() or (path.exists() and path.samefile(image))
-        for path in paths.values()
-    ):
-        raise InvalidInputError("SynthSeg output files must not replace the input image")
-    existing = [path for path in paths.values() if path.exists() or path.is_symlink()]
-    if existing and not overwrite:
-        names = ", ".join(path.name for path in existing)
-        raise InvalidInputError(
-            f"SynthSeg outputs already exist in {output}: {names}; "
-            "pass overwrite=true to replace them"
-        )
+    paths = output_targets(output_dir, OUTPUT_FILES, overwrite=overwrite, inputs=[image])
+    output = paths["mask"].parent
     _validate_image(image)
     # Every argument is checked; only now may the weights be downloaded.
-    from medmlx_core.weights import weights_dir, weights_revision
-
-    models_dir = (weights_dir("synthseg") if weights_path is None
-                  else Path(weights_path).expanduser())
+    models_dir = model_folder("synthseg", weights_path)
     _require_weight_files(models_dir, variant, parc=parc)
     output.mkdir(parents=True, exist_ok=True)
 
@@ -480,7 +430,7 @@ def run(
                 crop=crop,
                 parc=parc,
                 save_posteriors=save_posteriors,
-                arithmetic_profile=arithmetic_profile,
+                arithmetic_profile=precision,
             )
         except Exception as exc:
             # The source preprocessor reports unsupported dimensions as bare Exceptions.
@@ -490,8 +440,9 @@ def run(
                 ) from exc
             raise
         details = _check_outputs(image, partial, variant=variant, save_posteriors=save_posteriors)
-        _publish_outputs(
-            {paths[role]: partial[role] for role in written},
+        # The checked files move into publish's staging; a stale posteriors file goes.
+        publish(
+            {paths[role]: _move_from(partial[role]) for role in written},
             remove=tuple(paths[role] for role in OUTPUT_FILES if role not in written),
         )
     cast(dict[str, object], details).update(
@@ -998,11 +949,11 @@ def copy_nifti(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
         return
     with (
-        source.open("rb") as input_file,
+        source.open("rb") as source_file,
         destination.open("wb") as raw_output,
         gzip.GzipFile(fileobj=raw_output, mode="wb", filename="", mtime=0) as output,
     ):
-        shutil.copyfileobj(input_file, output)
+        shutil.copyfileobj(source_file, output)
 
 
-__all__ = ["MODEL", "OUTPUT_FILES", "SYNTHSEG_REVISION", "label_names", "run"]
+__all__ = ["MODEL", "OUTPUT_FILES", "SYNTHSEG_REVISION", "label_names", "segment"]
