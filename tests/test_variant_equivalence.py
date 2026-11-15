@@ -321,7 +321,7 @@ def test_variant_runner_uses_the_same_graph_and_processing(
     monkeypatch.setattr(mlx_postprocess, "postprocess_mlx", recording_postprocess)
     image = tmp_path / "image.nii.gz"
     nib.save(nib.Nifti1Image(fixture["runner_input"], fixture["runner_input_affine"]), str(image))
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=image,
         weights_path=tmp_path,
         output_dir=tmp_path / "out",
@@ -380,7 +380,7 @@ def test_publication_failure_restores_prior_outputs(
         monkeypatch.setattr(Path, "unlink", fail_stale)
 
     with pytest.raises(OSError, match="injected publication failure"):
-        medmlx.segment(
+        medmlx.run(
             image_path=image,
             weights_path=tmp_path,
             output_dir=output,
@@ -408,7 +408,7 @@ def test_variant_runner_supports_crop(
         nib.Nifti1Image(fixture["crop_runner_input"], fixture["crop_runner_input_affine"]),
         str(image),
     )
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=image,
         weights_path=tmp_path,
         output_dir=tmp_path / "out",
@@ -434,7 +434,7 @@ def test_ct_runner_matches_upstream(
     nib.save(
         nib.Nifti1Image(fixture["ct_runner_input"], fixture["ct_runner_input_affine"]), str(image)
     )
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=image, weights_path=tmp_path, output_dir=tmp_path / "out", ct=True, **options
     )
     assert_runner_files(result, fixture, ct=True)
@@ -450,7 +450,7 @@ def test_runner_without_parcellation_needs_only_segmentation_and_qc(
     weights[1].unlink()
     image = tmp_path / "image.nii.gz"
     nib.save(nib.Nifti1Image(fixture["runner_input"], fixture["runner_input_affine"]), str(image))
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=image,
         weights_path=tmp_path,
         output_dir=tmp_path / "out",

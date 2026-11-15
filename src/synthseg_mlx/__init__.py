@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from synthseg_mlx.label_data import load_label_data as load_label_data
     from synthseg_mlx.labels import get_flip_indices as get_flip_indices
-    from synthseg_mlx.medmlx import segment as segment
+    from synthseg_mlx.medmlx import run as run
     from synthseg_mlx.mlx_engine import postprocess_arrays as postprocess_arrays
     from synthseg_mlx.mlx_engine import predict_numpy as predict_numpy
     from synthseg_mlx.mlx_engine import prepare_network_input as prepare_network_input
@@ -43,7 +43,7 @@ _EXPORTS = {
     "prepare_network_input": "synthseg_mlx.mlx_engine",
     "preprocess": "synthseg_mlx.processing",
     "qc_scores": "synthseg_mlx.mlx_engine",
-    "segment": "synthseg_mlx.medmlx",
+    "run": "synthseg_mlx.medmlx",
 }
 
 __all__ = [
@@ -62,7 +62,7 @@ __all__ = [
     "prepare_network_input",
     "preprocess",
     "qc_scores",
-    "segment",
+    "run",
 ]
 
 

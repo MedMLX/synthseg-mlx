@@ -56,7 +56,7 @@ def test_run_rejects_arguments_before_downloading_weights(
         output.mkdir()
         (output / "mask.nii.gz").write_bytes(b"previous")
     with pytest.raises(InvalidInputError):
-        medmlx.segment(**cast(RunArguments, arguments))
+        medmlx.run(**cast(RunArguments, arguments))
 
 
 def test_declared_labels_match_the_bundled_label_map() -> None:

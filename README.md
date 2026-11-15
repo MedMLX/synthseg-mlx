@@ -34,9 +34,9 @@ uv pip install "synthseg-mlx>=0.3.5"
 ## Run
 
 ```python
-from synthseg_mlx import segment
+from synthseg_mlx import run
 
-result = segment(image_path="brain.nii.gz", output_dir="out")
+result = run(image_path="brain.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
@@ -89,7 +89,7 @@ can fail if that axis stays ten voxels or fewer after preprocessing.
 | `qc_scores` | `qc.csv` | Eight regional QC scores from 0 to 1 |
 | `posteriors` | `posteriors.nii.gz` | float32 per-label probabilities on the mask's grid; only with `save_posteriors=True` |
 
-`segment` returns `{"outputs": {...}, "artifacts": {...}, "details": {...}}`. `artifacts` describes each file by role (the mask as a label map with its label names), and `details` holds run metadata.
+`run` returns `{"outputs": {...}, "artifacts": {...}, "details": {...}}`. `artifacts` describes each file by role (the mask as a label map with its label names), and `details` holds run metadata.
 
 | Error | Raised when |
 | :--- | :--- |
@@ -103,7 +103,7 @@ and run:
 
 ```python
 from huggingface_hub import snapshot_download
-from synthseg_mlx import segment
+from synthseg_mlx import run
 
 weights = snapshot_download(
     "MedMLX/synthseg-mlx",
@@ -111,7 +111,7 @@ weights = snapshot_download(
     allow_patterns=["synthseg_2.0.safetensors", "synthseg_parc_2.0.safetensors",
                     "synthseg_qc_2.0.safetensors"],
 )
-result = segment(image_path="brain.nii.gz", weights_path=weights, output_dir="out")
+result = run(image_path="brain.nii.gz", weights_path=weights, output_dir="out")
 print(result["outputs"]["mask"])
 ```
 

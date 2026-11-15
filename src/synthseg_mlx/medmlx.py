@@ -59,7 +59,7 @@ MODEL = {
     "id": "synthseg",
     "label": "SynthSeg 2.0",
     "task": "segmentation",
-    "run": "synthseg_mlx.medmlx:segment",
+    "run": "synthseg_mlx.medmlx:run",
     # Measured MLX peak for a 160x192x192 T1 MRI with parcellation; larger inputs need more.
     "peak_memory_gb": 11.6,
     "summary": (
@@ -266,7 +266,7 @@ class RunOutputs(TypedDict):
     posteriors: NotRequired[str]
 
 
-# Return value of ``segment``: ``outputs`` and ``artifacts`` share the roles of ``RunOutputs``.
+# Return value of ``run``: ``outputs`` and ``artifacts`` share the roles of ``RunOutputs``.
 type RunResult = _RunResult[RunDetails, RunOutputs]
 
 
@@ -311,7 +311,7 @@ def _move_from(staged: Path) -> Callable[[Path], None]:
     return lambda target: os.replace(staged, target)
 
 
-def segment(
+def run(
     *,
     image_path: str | os.PathLike[str],
     weights_path: str | os.PathLike[str] | None = None,
@@ -1004,4 +1004,4 @@ def copy_nifti(source: Path, destination: Path) -> None:
         shutil.copyfileobj(source_file, output)
 
 
-__all__ = ["MODEL", "OUTPUT_FILES", "SYNTHSEG_REVISION", "label_names", "segment"]
+__all__ = ["MODEL", "OUTPUT_FILES", "SYNTHSEG_REVISION", "label_names", "run"]
