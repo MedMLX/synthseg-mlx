@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 from synthseg_mlx._typing import (
     DoubleArray,
@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 import numpy as np
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError, ModelExecutionError
 from medmlx_core.files import input_file, output_targets, publish
+from medmlx_core.outputs import Artifact, OutputLabel, artifact
+from medmlx_core.outputs import RunResult as _RunResult
 from medmlx_core.weights import model_folder, weights_revision
 
 from synthseg_mlx.variants import (
@@ -252,11 +254,18 @@ class RunDetails(OutputDetails):
     parc: bool
 
 
-class RunResult(TypedDict):
-    """Return value of ``segment``: output file paths by role, and the run details."""
+class RunOutputs(TypedDict):
+    """Output file paths by role; ``posteriors`` is present only with ``save_posteriors``."""
 
-    outputs: dict[str, str]
-    details: RunDetails
+    mask: str
+    resampled_input: str
+    volumes: str
+    qc_scores: str
+    posteriors: NotRequired[str]
+
+
+# Return value of ``segment``: ``outputs`` and ``artifacts`` share the roles of ``RunOutputs``.
+type RunResult = _RunResult[RunDetails, RunOutputs]
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,9 +383,12 @@ def segment(
     needed). Output requires human review and is not ground truth.
 
     Returns:
-        ``{"outputs": {role: path}, "details": {...}}``. Roles are ``mask``,
+        ``{"outputs": ..., "artifacts": ..., "details": ...}``; outputs and artifacts are
+        keyed by role. Roles are ``mask``,
         ``resampled_input``, ``volumes``, ``qc_scores`` and, when requested,
-        ``posteriors``. ``details`` holds label facts, volumes (mm^3), QC scores, the
+        ``posteriors``. ``artifacts`` marks ``mask`` as a label map with its label names,
+        ``resampled_input`` as a registered image, the posteriors as a feature tensor and
+        the CSVs as measurements. ``details`` holds label facts, volumes (mm^3), QC scores, the
         variant flags and runtime timings.
 
     Raises:
@@ -457,9 +469,47 @@ def segment(
         parc=parc,
     )
     return {
-        "outputs": {role: paths[role].as_posix() for role in written},
+        "outputs": cast(RunOutputs, {role: paths[role].as_posix() for role in written}),
+        "artifacts": _describe_outputs(
+            variant, parc=parc, resampled=details["grid"] != "input", written=written
+        ),
         "details": cast(RunDetails, details),
     }
+
+
+def _describe_outputs(
+    variant: SynthSegVariant, *, parc: bool, resampled: bool, written: Sequence[str]
+) -> dict[str, Artifact]:
+    """Describe each written role: kind, space, mask labels and the grid it shares.
+
+    The mask lists the variant's segmentation labels, plus the cortical parcels when
+    ``parc`` is true, with the names of ``select_labels``. The mask, resampled image
+    and posteriors share one grid, which is the input's only when nothing was resampled.
+    """
+
+    selection = select_labels(variant, parc=parc)
+    count = len(selection.volume_labels) - (0 if variant.v1 else 1)
+    labels: list[OutputLabel] = [
+        {"value": int(value), "name": str(name)}
+        for value, name in zip(
+            selection.volume_labels[:count], selection.volume_names[:count], strict=True
+        )
+    ]
+    grid_of = None if resampled else "image_path"
+    described = {
+        "mask": artifact(
+            kind="label_map", coordinate_space="image_physical", labels=labels, grid_of=grid_of
+        ),
+        "resampled_input": artifact(
+            kind="registered_image", coordinate_space="image_physical", grid_of=grid_of
+        ),
+        "volumes": artifact(kind="measurement", coordinate_space="not_applicable", units="mm3"),
+        "qc_scores": artifact(kind="measurement", coordinate_space="not_applicable"),
+        "posteriors": artifact(
+            kind="feature_tensor", coordinate_space="image_physical", grid_of=grid_of
+        ),
+    }
+    return {role: described[role] for role in written}
 
 
 def _validate_crop(crop: int | Sequence[int] | None) -> int | list[int] | None:

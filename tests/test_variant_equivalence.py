@@ -1,6 +1,7 @@
 """Reduced seeded graphs and complete runners against upstream TensorFlow/Keras."""
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol, TypedDict, Unpack, cast
 
@@ -9,6 +10,7 @@ import nibabel as nib_runtime
 import numpy as np
 import pytest
 from medmlx_core.errors import ModelExecutionError
+from medmlx_core.outputs import validate_outputs
 from recording_types import Recording
 from variant_fixtures import (
     assert_reporting_units,
@@ -249,6 +251,14 @@ def assert_runner_files(
 ) -> None:
     """Compare the written mask and resampled input with a recorded upstream runner."""
     prefix = ("ct_" if ct else "") if prefix is None else prefix
+    checked = validate_outputs(cast(Mapping[str, object], result))
+    assert {role: entry["kind"] for role, entry in checked.artifacts.items()} == {
+        "mask": "label_map",
+        "resampled_input": "registered_image",
+        "volumes": "measurement",
+        "qc_scores": "measurement",
+        **({"posteriors": "feature_tensor"} if "posteriors" in checked.paths else {}),
+    }
     mask = nib.load(result["outputs"]["mask"])
     resampled = nib.load(result["outputs"]["resampled_input"])
     data = cast(IndexArray, np.asanyarray(mask.dataobj))

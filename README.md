@@ -89,7 +89,7 @@ can fail if that axis stays ten voxels or fewer after preprocessing.
 | `qc_scores` | `qc.csv` | Eight regional QC scores from 0 to 1 |
 | `posteriors` | `posteriors.nii.gz` | float32 per-label probabilities on the mask's grid; only with `save_posteriors=True` |
 
-`run` returns `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
+`segment` returns `{"outputs": {...}, "artifacts": {...}, "details": {...}}`. `artifacts` describes each file by role (the mask as a label map with its label names), and `details` holds run metadata.
 
 | Error | Raised when |
 | :--- | :--- |
