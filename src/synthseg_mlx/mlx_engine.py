@@ -1,7 +1,9 @@
 """Array-only inference for the SynthSeg MLX executor.
 
 Callers own image I/O, label selection, and output writing. Preprocessing and
-postprocessing use NumPy/SciPy code extracted from SynthSeg (see THIRD_PARTY_NOTICES.md).
+``postprocess_arrays`` use NumPy/SciPy code extracted from SynthSeg (see
+THIRD_PARTY_NOTICES.md); the runner postprocesses on the GPU with
+``synthseg_mlx.mlx_postprocess``, which ``predict_arrays`` feeds without a host copy.
 Volumes are channels-last (NDHWC) and, inside the network, in RAS axis order.
 """
 
@@ -62,6 +64,19 @@ def predict_numpy(
             grid cannot be reproduced by the decoder.
     """
 
+    segmentation, parcellation, qc_score = predict_arrays(model, image)
+    return (
+        cast(FloatArray, np.array(segmentation)),
+        cast(FloatArray, np.array(parcellation)) if parcellation is not None else None,
+        cast(FloatArray, np.array(qc_score)),
+    )
+
+
+def predict_arrays(
+    model: SynthSegModel, image: RealArray
+) -> tuple[NativeArray, NativeArray | None, NativeArray]:
+    """``predict_numpy`` with the evaluated outputs left on the device as MLX arrays."""
+
     import_mlx()
     import mlx.core as mlxc
 
@@ -70,11 +85,7 @@ def predict_numpy(
     cast(NativeArrayApi, mlxc).eval(segmentation, qc_score)
     if parcellation is not None:
         cast(NativeArrayApi, mlxc).eval(parcellation)
-    return (
-        cast(FloatArray, np.array(segmentation)),
-        cast(FloatArray, np.array(parcellation)) if parcellation is not None else None,
-        cast(FloatArray, np.array(qc_score)),
-    )
+    return segmentation, parcellation, qc_score
 
 
 def postprocess_arrays(

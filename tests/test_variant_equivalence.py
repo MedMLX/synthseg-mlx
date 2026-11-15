@@ -22,6 +22,7 @@ from variant_fixtures import (
 from synthseg_mlx import (
     SynthSegModel,
     medmlx,
+    mlx_postprocess,
     postprocess_arrays,
     predict_numpy,
     processing,
@@ -37,6 +38,20 @@ from synthseg_mlx._typing import (
     Size,
 )
 from synthseg_mlx.variants import SynthSegVariant
+
+
+class PostprocessOptions(TypedDict):
+    shape: list[int]
+    pad_idx: IndexArray
+    crop_idx: IndexArray | None
+    labels_segmentation: IndexArray
+    labels_parcellation: IndexArray
+    aff: DoubleArray
+    im_res: RealArray
+    topology_classes: IndexArray | None
+    fast: bool
+    v1: bool
+    return_posteriors: bool
 
 
 class Flags(TypedDict):
@@ -284,6 +299,26 @@ def test_variant_runner_uses_the_same_graph_and_processing(
     """Compare end-to-end variant runner outputs with the source fixture."""
     fixture, model, weights, options = variant_case
     reduced_runner(fixture, model, weights, monkeypatch)
+    # Upstream sums non-Standard volumes in float32; the runner's sums are exact to
+    # float64 level, so record the NumPy reference with float64 accumulation on the
+    # same network output.
+    reference: list[RealArray] = []
+    runner_postprocess = mlx_postprocess.postprocess_mlx
+
+    def recording_postprocess(
+        segmentation: mx.array, parcellation: mx.array | None, **kw: Unpack[PostprocessOptions]
+    ) -> tuple[IndexArray, RealArray | None, RealArray]:
+        """Run the runner's postprocessing and keep the float64 NumPy volumes."""
+        reference.append(processing.postprocess(
+            cast(FloatArray, np.array(segmentation)),
+            None if parcellation is None else cast(FloatArray, np.array(parcellation)),
+            kw["shape"], kw["pad_idx"], kw["crop_idx"], kw["labels_segmentation"],
+            kw["labels_parcellation"], kw["aff"], kw["im_res"], kw["fast"],
+            kw["topology_classes"], kw["v1"], volume_dtype=np.float64, return_posteriors=False,
+        )[2])
+        return runner_postprocess(segmentation, parcellation, **kw)
+
+    monkeypatch.setattr(mlx_postprocess, "postprocess_mlx", recording_postprocess)
     image = tmp_path / "image.nii.gz"
     nib.save(nib.Nifti1Image(fixture["runner_input"], fixture["runner_input_affine"]), str(image))
     result = medmlx.segment(
@@ -296,7 +331,7 @@ def test_variant_runner_uses_the_same_graph_and_processing(
     expected_volumes = (
         load_standard_volume_reference("runner")
         if not options["fast"] and not options["robust"] and not options["v1"]
-        else fixture["runner_volumes"]
+        else reference[0]
     )
     assert_reporting_units(
         list(result["details"]["volumes_mm3"].values()), expected_volumes, decimals=3

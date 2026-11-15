@@ -37,6 +37,8 @@ from synthseg_mlx._typing import (
 )
 
 if TYPE_CHECKING:
+    from mlx.core import array as NativeArray
+
     from synthseg_mlx.mlx_model import SynthSegModel
 
 import numpy as np
@@ -205,7 +207,7 @@ class RuntimeFacts(TypedDict):
     Timings are seconds; ``peak_memory_bytes`` is MLX's peak memory from the start of
     execution through the network pass (postprocessing is not included).
     ``source_revision`` is ``SYNTHSEG_REVISION`` for the standard variant and
-    ``UPSTREAM_REVISION`` otherwise; ``volume_accumulator`` is float64 for standard.
+    ``UPSTREAM_REVISION`` otherwise; ``volume_accumulator`` is float64 for every variant.
     """
 
     backend: str
@@ -638,7 +640,7 @@ def _execute(
     )
 
     mlxc = import_mlx()
-    from synthseg_mlx.mlx_engine import predict_numpy
+    from synthseg_mlx.mlx_engine import predict_arrays
 
     labels = select_labels(variant, parc=parc)
     mlxc.reset_peak_memory()
@@ -652,7 +654,7 @@ def _execute(
     model_load_seconds = time.perf_counter() - loaded_started
     _write_tables(paths, labels, variant)
     network_started = time.perf_counter()
-    predictions = predict_numpy(model, prepared.network_input)
+    predictions = predict_arrays(model, prepared.network_input)
     network_seconds = time.perf_counter() - network_started
     peak_memory_bytes = mlxc.get_peak_memory()
     postprocess_started = time.perf_counter()
@@ -665,10 +667,7 @@ def _execute(
         "numpy": np.__version__,
         "precision": "float32",
         "arithmetic_profile": arithmetic_profile,
-        "volume_accumulator": (
-            "float64" if variant is SynthSegVariant.STANDARD or prepared.crop_indices is not None
-            else "float32"
-        ),
+        "volume_accumulator": "float64",
         "source_revision": (
             SYNTHSEG_REVISION if variant is SynthSegVariant.STANDARD else UPSTREAM_REVISION
         ),
@@ -781,7 +780,7 @@ def _write_prediction(
     paths: dict[str, Path],
     prepared: _PreparedImage,
     labels: LabelSelection,
-    predictions: tuple[FloatArray, FloatArray | None, FloatArray],
+    predictions: tuple[NativeArray, NativeArray | None, NativeArray],
     variant: SynthSegVariant,
     parc: bool = True,
     posteriors_path: Path | None = None,
@@ -790,12 +789,12 @@ def _write_prediction(
 
     from synthseg_mlx._lab2im import utils
     from synthseg_mlx.mlx_engine import qc_scores
-    from synthseg_mlx.processing import postprocess
+    from synthseg_mlx.mlx_postprocess import postprocess_mlx
 
     options = dict(robust=variant.robust, fast=variant.fast, v1=variant.v1)
     segmentation, parcellation, quality = predictions
-    # predict_numpy returned owned host buffers; consume them without copying again.
-    mask, posteriors, volumes = postprocess(
+    # Posteriors stay on the GPU; only the outputs written below reach the host.
+    mask, posteriors, volumes = postprocess_mlx(
         segmentation,
         parcellation if parc else None,
         shape=prepared.shape,
@@ -808,8 +807,6 @@ def _write_prediction(
         topology_classes=labels.topology_classes,
         fast=variant.fast,
         v1=variant.v1,
-        reuse_segmentation=True,
-        volume_dtype=np.float64 if variant is SynthSegVariant.STANDARD else None,
         return_posteriors=posteriors_path is not None,
     )
     utils.save_volume(mask, prepared.affine, prepared.header, str(paths["mask"]), dtype="int32")
@@ -822,12 +819,13 @@ def _write_prediction(
             dtype="float32",
         )
     subject = image.name.replace(".nii.gz", "")
+    quality_scores = cast(FloatArray, np.array(quality))
     _write_tables(
         paths,
         labels,
         variant,
         volumes_row=[subject, *(str(value) for value in volumes)],
-        qc_row=[subject, *(f"{value:.4f}" for value in qc_scores(quality, **options))],
+        qc_row=[subject, *(f"{value:.4f}" for value in qc_scores(quality_scores, **options))],
     )
 
 

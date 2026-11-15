@@ -2,14 +2,24 @@
 
 from typing import cast
 
+import mlx.core as mx
 import numpy as np
 import pytest
 from recording_types import Recording
 from variant_fixtures import assert_reporting_units
 
 from synthseg_mlx import load_label_data, postprocess, preprocess
-from synthseg_mlx._typing import DoubleArray, IndexArray, NameArray, RealArray
+from synthseg_mlx._typing import (
+    DoubleArray,
+    IndexArray,
+    LabelArray,
+    NameArray,
+    RealArray,
+)
 from synthseg_mlx.label_data import LABEL_FILES
+from synthseg_mlx.mlx_postprocess import postprocess_mlx
+
+type Postprocessed = tuple[LabelArray, RealArray | None, RealArray]
 
 
 @pytest.mark.parametrize(
@@ -60,27 +70,40 @@ def test_preprocess_matches_upstream(reference_fixtures: dict[str, Recording], n
 
 @pytest.mark.parametrize("name", ["standard", "crop", "fast", "no_topology", "v1_no_parc"])
 @pytest.mark.parametrize("return_posteriors", [True, False])
+@pytest.mark.parametrize("gpu", [False, True], ids=["numpy", "mlx"])
 def test_postprocess_matches_upstream(
-    reference_fixtures: dict[str, Recording], name: str, return_posteriors: bool
+    reference_fixtures: dict[str, Recording], name: str, return_posteriors: bool, gpu: bool
 ) -> None:
-    """Compare segmentation postprocessing with recorded source outputs."""
+    """Compare the NumPy and runner (MLX) postprocessing with recorded source outputs."""
     fixture = reference_fixtures[f"postprocess_{name}"]
-    mask, posteriors, volumes = postprocess(
-        fixture["segmentation"].copy(),
-        fixture["parcellation"].copy() if fixture["has_parcellation"] else None,
-        fixture["shape"].tolist(),
-        fixture["pad_idx"],
-        cast(IndexArray, fixture["crop_idx"]) if fixture["crop_idx"].size else None,
-        fixture["labels_segmentation"],
-        fixture["labels_parcellation"],
-        fixture["aff"],
-        fixture["im_res"],
-        bool(fixture["fast"]),
-        cast(IndexArray, fixture["topology_classes"]) if fixture["topology_classes"].size else None,
-        bool(fixture["v1"]),
-        volume_dtype=None,
-        return_posteriors=return_posteriors,
-    )
+    segmentation = fixture["segmentation"]
+    has_parc = bool(fixture["has_parcellation"])
+    parcellation = fixture["parcellation"] if has_parc else None
+    crop_idx = cast(IndexArray, fixture["crop_idx"]) if fixture["crop_idx"].size else None
+    classes = cast(IndexArray, fixture["topology_classes"])
+    topology = classes if classes.size else None
+    shape = cast(list[int], fixture["shape"].tolist())
+
+    def run(gpu: bool, volume_dtype: type[np.float64] | None) -> Postprocessed:
+        """Postprocess fresh copies with the NumPy reference or the runner's MLX path."""
+        common = (fixture["labels_segmentation"], fixture["labels_parcellation"], fixture["aff"])
+        flags = (fixture["im_res"], bool(fixture["fast"]), topology, bool(fixture["v1"]))
+        if gpu:
+            parc = None if parcellation is None else mx.array(parcellation)
+            return postprocess_mlx(
+                mx.array(segmentation), parc, shape, fixture["pad_idx"], crop_idx, *common,
+                *flags, return_posteriors=return_posteriors,
+            )
+        parc_host = None if parcellation is None else parcellation.copy()
+        return postprocess(
+            segmentation.copy(), parc_host, shape, fixture["pad_idx"], crop_idx, *common,
+            *flags, volume_dtype=volume_dtype, return_posteriors=return_posteriors,
+        )
+
+    mask, posteriors, volumes = run(gpu, None)
+    # Upstream accumulates uncropped non-Standard volumes in float32. The MLX sums are
+    # exact to float64 level, so they are held to the reference's float64 result.
+    expected_volumes = run(False, np.float64)[2] if gpu else fixture["expected_volumes"]
     np.testing.assert_array_equal(mask, fixture["expected_mask"])
     if return_posteriors:
         np.testing.assert_allclose(
@@ -88,7 +111,7 @@ def test_postprocess_matches_upstream(
         )
     else:
         assert posteriors is None
-    assert_reporting_units(volumes, fixture["expected_volumes"], decimals=3)
+    assert_reporting_units(volumes, expected_volumes, decimals=3)
     assert mask.dtype == np.int32
     assert mask[0, 0, 0] == 0  # The disconnected island is removed in every mode.
     island = (12, 9, 10) if name == "crop" else (10, 6, 6)

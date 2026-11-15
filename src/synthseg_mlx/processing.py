@@ -237,6 +237,15 @@ def postprocess(post_patch_seg: RealArray | None, post_patch_parc: RealArray | N
         volume_posteriors = edit_volumes.align_volume_to_ref(post_patch_seg, np.eye(4), aff_ref=aff, n_dims=3, return_copy=False)
     accumulator = np.float64 if crop_idx is not None and volume_dtype is None else volume_dtype
     volumes = np.sum(volume_posteriors[..., 1:], axis=(0, 1, 2), dtype=accumulator)
+    return seg, posteriors, report_volumes(volumes, volumes_parc, labels_segmentation, im_res, v1)
+
+
+def report_volumes(volumes: RealArray, volumes_parc: RealArray | None, labels_segmentation: IndexArray, im_res: RealArray, v1: bool) -> RealArray:
+    """Turn per-label posterior sums into the reported mm^3 volume row.
+
+    ``volumes`` holds the non-background segmentation sums and ``volumes_parc`` the
+    non-background parcel sums (or ``None``). Arithmetic stays in their dtype, as upstream.
+    """
     total_volume_cortex_left = np.sum(volumes[np.where(labels_segmentation == 3)[0] - 1])
     total_volume_cortex_right = np.sum(volumes[np.where(labels_segmentation == 42)[0] - 1])
     if not v1:
@@ -247,9 +256,7 @@ def postprocess(post_patch_seg: RealArray | None, post_patch_parc: RealArray | N
         volumes_parc_left = volumes_parc_left / np.sum(volumes_parc_left) * total_volume_cortex_left
         volumes_parc_right = volumes_parc_right / np.sum(volumes_parc_right) * total_volume_cortex_right
         volumes = np.concatenate([volumes, volumes_parc_left, volumes_parc_right])
-    volumes = cast(RealArray, np.around(volumes * np.prod(im_res), 3))
-
-    return seg, posteriors, volumes
+    return cast(RealArray, np.around(volumes * np.prod(im_res), 3))
 
 
 def largest_component(mask: BoolArray) -> BoolArray:
