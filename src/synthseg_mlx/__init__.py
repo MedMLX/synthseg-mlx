@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from synthseg_mlx.processing import preprocess as preprocess
     from synthseg_mlx.variants import SynthSegVariant as SynthSegVariant
 
-__version__ = "0.3.5"
+__version__ = "0.4.0"
 
 _EXPORTS = {
     "BatchNorm3d": "synthseg_mlx.mlx_model",
