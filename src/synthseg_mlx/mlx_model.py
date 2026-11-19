@@ -464,18 +464,22 @@ class QCNet(CheckpointLayers):
             stream=mx.gpu,
         )[0]
 
-    def _finish_block(self, x: NativeArray, residual: NativeArray, level: int) -> NativeArray:
-        # Second convolution of a QC level, then the residual add, norm and pool.
+    def _finish_block(
+        self, x: NativeArray, residual: NativeArray, level: int, *, bounded: bool = False
+    ) -> NativeArray:
         """Finish a QC block with its second convolution and residual pooling."""
-        x = self.layer(f"qc_conv_downarm_{level}_1")(x)
-        return self._norm_pool(x, residual, level)
+        # At full resolution, finish the main convolution before allocating the
+        # residual branch, then finish pooling before evaluating lower levels.
+        settle = _evaluate if bounded else _defer
+        x = settle(self.layer(f"qc_conv_downarm_{level}_1")(x))
+        return settle(self._norm_pool(x, residual, level))
 
-    def _forward(self, x: NativeArray, start: int) -> NativeArray:
+    def _forward(self, x: NativeArray, start: int, *, bounded: bool = False) -> NativeArray:
         """Run remaining QC blocks and average regional scores spatially."""
         for level in range(start, 4):
             residual = nn.relu(self.layer(f"qc_expand_down_merge_{level}")(x))
             x = nn.relu(self.layer(f"qc_conv_downarm_{level}_0")(x))
-            x = self._finish_block(x, residual, level)
+            x = self._finish_block(x, residual, level, bounded=bounded and level == 0)
         x = nn.relu(self.layer("qc_final_conv_0")(x))
         x = nn.relu(self.layer("qc_final_conv_1")(x))
         return x.mean(axis=(1, 2, 3))
@@ -501,8 +505,8 @@ class QCNet(CheckpointLayers):
             stream=mx.gpu,
         )[0]
 
-    def score_indices(self, indices: NativeArray) -> NativeArray:
-        """Score an int32 NDHW class map without materializing its one-hot volume."""
+    def score_indices(self, indices: NativeArray, *, bounded: bool = False) -> NativeArray:
+        """Score an int32 NDHW class map, evaluating the first block early if bounded."""
         if indices.ndim != 4 or indices.dtype != mx.int32:
             raise ModelExecutionError("SynthSeg QC class indices require int32 NDHW tensors")
         channels = cast("NativeConv3d", self.layer("qc_conv_downarm_0_0")).weight.shape[-1]
@@ -510,10 +514,10 @@ class QCNet(CheckpointLayers):
         # Preserve that accumulation order through the existing array interface.
         if channels > 16:
             one_hot = (indices[..., None] == mx.arange(channels, dtype=mx.int32)).astype(mx.float32)
-            return self(one_hot)
+            return self._forward(one_hot, 0, bounded=bounded)
         residual = nn.relu(self._class_convolve("qc_expand_down_merge_0", indices))
         x = nn.relu(self._class_convolve("qc_conv_downarm_0_0", indices))
-        return self._forward(self._finish_block(x, residual, 0), 1)
+        return self._forward(self._finish_block(x, residual, 0, bounded=bounded), 1)
 
 
 def crop_for_qc(indices: NativeArray, target: int = 224) -> NativeArray:
@@ -864,7 +868,7 @@ class SynthSegModel(nn.Module):
 
         cropped = mx.stack([crop_for_qc(item, self.qc_shape) for item in indices])
         qc_indices = self.qc_labels[cropped]
-        qc = settle(self.qc.score_indices(qc_indices))
+        qc = settle(self.qc.score_indices(qc_indices, bounded=bounded))
 
         if self.parcellation is None:
             return segmentation, None, qc
