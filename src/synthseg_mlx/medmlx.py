@@ -50,7 +50,7 @@ from medmlx_core.weights import model_folder, weights_revision
 
 from synthseg_mlx.variants import (
     UPSTREAM_REVISION,
-    ArithmeticProfile,
+    Precision,
     SynthSegVariant,
     parse_variant,
 )
@@ -213,8 +213,8 @@ class RuntimeFacts(TypedDict):
     backend: str
     mlx: str
     numpy: str
-    precision: str
-    arithmetic_profile: ArithmeticProfile
+    dtype: str
+    precision: Precision
     volume_accumulator: str
     source_revision: str
     mlx_default_device: str
@@ -324,7 +324,7 @@ def run(
     parc: bool = True,
     save_posteriors: bool = False,
     overwrite: bool = False,
-    precision: ArithmeticProfile = "source-fp32",
+    precision: Precision = "source-fp32",
 ) -> RunResult:
     """Segment one 3D brain NIfTI with SynthSeg, optionally parcellate cortex, and score QC.
 
@@ -444,7 +444,7 @@ def run(
                 crop=crop,
                 parc=parc,
                 save_posteriors=save_posteriors,
-                arithmetic_profile=precision,
+                precision=precision,
             )
         except Exception as exc:
             # The source preprocessor reports unsupported dimensions as bare Exceptions.
@@ -630,7 +630,7 @@ def _execute(
     crop: Size | None = None,
     parc: bool = True,
     save_posteriors: bool = False,
-    arithmetic_profile: ArithmeticProfile = "source-fp32",
+    precision: Precision = "source-fp32",
 ) -> RuntimeFacts:
     """Run the selected segmentation, parcellation and QC graphs natively in MLX."""
 
@@ -649,7 +649,7 @@ def _execute(
     preprocessing_seconds = time.perf_counter() - prepared_started
     loaded_started = time.perf_counter()
     model = _load_model(
-        models_dir, labels, variant, parc=parc, arithmetic_profile=arithmetic_profile
+        models_dir, labels, variant, parc=parc, precision=precision
     )
     model_load_seconds = time.perf_counter() - loaded_started
     _write_tables(paths, labels, variant)
@@ -665,8 +665,8 @@ def _execute(
         "backend": "mlx",
         "mlx": version("mlx"),
         "numpy": np.__version__,
-        "precision": "float32",
-        "arithmetic_profile": arithmetic_profile,
+        "dtype": "float32",
+        "precision": precision,
         "volume_accumulator": "float64",
         "source_revision": (
             SYNTHSEG_REVISION if variant is SynthSegVariant.STANDARD else UPSTREAM_REVISION
@@ -714,7 +714,7 @@ def _load_model(
     variant: SynthSegVariant,
     *,
     parc: bool = True,
-    arithmetic_profile: ArithmeticProfile = "source-fp32",
+    precision: Precision = "source-fp32",
 ) -> SynthSegModel:
     """Build the model from the variant's checkpoints; bad weights raise ``AssetNotReadyError``."""
 
@@ -738,7 +738,7 @@ def _load_model(
             sigma=_SIGMA,
             qc_shape=_QC_SHAPE,
             labels_denoiser=denoiser_labels() if variant.robust else None,
-            arithmetic_profile=arithmetic_profile,
+            precision=precision,
             parc=parc,
             **options,
         )

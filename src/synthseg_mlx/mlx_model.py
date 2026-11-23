@@ -29,7 +29,7 @@ from synthseg_mlx._typing import (
     NativeOperation,
     NeuralRuntime,
 )
-from synthseg_mlx.variants import ArithmeticProfile, SynthSegVariant, parse_variant
+from synthseg_mlx.variants import Precision, SynthSegVariant, parse_variant
 
 
 def _native_arrays():
@@ -571,8 +571,8 @@ def _gaussian_weight(sigma: float, *, accurate: bool = False) -> NativeArray:
     """Normalized 3-D Gaussian kernel ``(K, K, K)`` with ``K = 2 * (ceil(2.5 * sigma) // 2) + 1``.
 
     ``sigma`` is in voxels; 0 gives a 1x1x1 identity kernel. ``accurate`` builds the
-    coefficients in float64 and rounds once to float32, for the compensated arithmetic
-    profile.
+    coefficients in float64 and rounds once to float32, for ``compensated-fp32``
+    precision.
     """
     width = int(math.ceil(2.5 * sigma) / 2) * 2 + 1
     if accurate:
@@ -670,23 +670,23 @@ class SynthSegModel(nn.Module):
         labels_denoiser: IndexArray | None = None,
         features: int = 24,
         denoiser_features: int = 16,
-        arithmetic_profile: ArithmeticProfile = "source-fp32",
+        precision: Precision = "source-fp32",
     ) -> None:
         """Construct the selected segmentation, parcellation, and QC graphs."""
         super().__init__()
         if not np.array_equal(np.unique(labels_qc), np.arange(len(np.unique(labels_qc)))):
             raise ModelExecutionError("SynthSeg MLX requires contiguous QC class indices")
         self.variant = parse_variant(robust=robust, fast=fast, v1=v1)
-        if arithmetic_profile not in {"source-fp32", "compensated-fp32"}:
-            raise ModelExecutionError(f"Unknown SynthSeg arithmetic profile {arithmetic_profile!r}")
+        if precision not in {"source-fp32", "compensated-fp32"}:
+            raise ModelExecutionError(f"Unknown SynthSeg precision {precision!r}")
         if (
-            arithmetic_profile == "compensated-fp32"
+            precision == "compensated-fp32"
             and self.variant is not SynthSegVariant.STANDARD
         ):
             raise ModelExecutionError("Compensated SynthSeg supports the standard 2.0 graph")
-        self.arithmetic_profile = arithmetic_profile
+        self.precision = precision
         self._accuracy_ops: CompensatedFloat32Operators | None = None
-        if arithmetic_profile == "compensated-fp32":
+        if precision == "compensated-fp32":
             from medmlx_core.compensated import CompensatedFloat32Operators as AccuracyOperators
 
             self._accuracy_ops = AccuracyOperators(cast(MlxRuntime, mx), 1, 1e-3)
@@ -756,7 +756,7 @@ class SynthSegModel(nn.Module):
         labels_denoiser: IndexArray | None = None,
         features: int = 24,
         denoiser_features: int = 16,
-        arithmetic_profile: ArithmeticProfile = "source-fp32",
+        precision: Precision = "source-fp32",
     ) -> SynthSegModel:
         """Load native safetensors; parcellation is optional when ``parc=False``."""
 
@@ -774,7 +774,7 @@ class SynthSegModel(nn.Module):
             labels_denoiser=labels_denoiser,
             features=features,
             denoiser_features=denoiser_features,
-            arithmetic_profile=arithmetic_profile,
+            precision=precision,
         )
         model.load_safetensors(path_segmentation, path_parcellation, path_qc)
         return model
@@ -917,7 +917,7 @@ class SynthSegModel(nn.Module):
             flipped = mx.flip(flipped, axis=1)[..., self.flip_indices]
             segmentation = self.blur((segmentation + flipped) * 0.5)
         else:
-            # Compensated and v1 profiles retain upstream smoothing before the mean.
+            # Compensated precision and the v1 variant retain upstream smoothing before the mean.
             segmentation = self.blur(segmentation)
             flipped = mx.flip(self.blur(flipped), axis=1)[..., self.flip_indices]
             segmentation = (segmentation + flipped) * 0.5
