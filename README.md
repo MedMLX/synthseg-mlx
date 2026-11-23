@@ -40,9 +40,8 @@ result = run(image_path="brain.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
-Omitting `weights_path` downloads `MedMLX/synthseg-mlx` into the shared MedMLX cache on
-first use; with MedMLX installed, `medmlx setup synthseg` downloads it ahead of time. To
-use your own copy, pass a folder containing `synthseg_2.0.safetensors`,
+Weights download from `MedMLX/synthseg-mlx` on first use; `medmlx setup synthseg`
+downloads them ahead of time. For local weights, pass a folder containing `synthseg_2.0.safetensors`,
 `synthseg_parc_2.0.safetensors` and `synthseg_qc_2.0.safetensors` as `weights_path`.
 With `parc=False`, the parcellation checkpoint is not needed.
 
@@ -74,7 +73,7 @@ output with or without `parc`, unlike upstream's QC without `--parc`.
 Images must be:
 
 - finite, non-constant and 3D, with at least three voxels per axis;
-- in millimetre or unspecified spatial units, with header voxel sizes that match the
+- in millimeter or unspecified spatial units, with header voxel sizes that match the
   affine;
 - on orthogonal axes (rotation is fine).
 
@@ -177,7 +176,6 @@ quality = qc_scores(raw_qc, **options)
   divisible by 16.
 - `postprocess` keeps the upstream parameter names and, like upstream, modifies its
   parcellation input.
-- Inference requires Apple Silicon with Metal.
 
 ## Use with MedMLX
 
