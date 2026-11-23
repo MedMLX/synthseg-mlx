@@ -14,10 +14,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import lru_cache
-from typing import Protocol, cast
+from typing import cast
 
 import mlx.core as mx
 import numpy as np
+from medmlx_core.typing import MetalKernel, MlxRuntime
 
 from synthseg_mlx import processing
 from synthseg_mlx._lab2im import edit_volumes
@@ -27,7 +28,6 @@ from synthseg_mlx._typing import (
     FloatArray,
     IndexArray,
     LabelArray,
-    NativeArrayApi,
     RealArray,
 )
 from synthseg_mlx.processing import report_volumes
@@ -38,22 +38,8 @@ _BLOCK = 4096
 _SLAB_VOXELS = 2**20
 
 
-class _Kernel(Protocol):
-    def __call__(
-        self,
-        *,
-        inputs: list[mx.array],
-        output_shapes: list[Sequence[int]],
-        output_dtypes: list[mx.Dtype],
-        grid: tuple[int, int, int],
-        threadgroup: tuple[int, int, int],
-        template: Sequence[tuple[str, int]],
-        stream: mx.StreamOrDevice,
-    ) -> list[mx.array]: ...
-
-
 @lru_cache(maxsize=1)
-def _split_sum_kernel() -> _Kernel:
+def _split_sum_kernel() -> MetalKernel:
     # Each posterior p in [0, 1] splits exactly into hi (multiple of 2**-12),
     # mid (multiple of 2**-24, |mid| <= 2**-13) and lo (|lo| <= 2**-25). Over 4096
     # voxels the hi and mid partial sums stay on their grids within 24 bits, so
@@ -61,7 +47,7 @@ def _split_sum_kernel() -> _Kernel:
     # only rounding, below 1e-7 voxel per block. The host adds the block sums in
     # float64.
     return cast(
-        _Kernel,
+        MetalKernel,
         mx.fast.metal_kernel(
             name="synthseg_split_sums",
             input_names=["x"],
@@ -157,7 +143,7 @@ def postprocess_mlx(
     low = [int(v) for v in pad_idx[:3]]
     size = [int(pad_idx[a + 3]) - low[a] for a in range(3)]
     rows = max(1, _SLAB_VOXELS // (seg.shape[1] * seg.shape[2]))
-    eval_ = cast(NativeArrayApi, mx).eval
+    eval_ = cast(MlxRuntime, mx).eval
 
     # Masks live on the padded grid with topology cleanup, as upstream labels
     # components before cropping, and on the cropped grid otherwise.

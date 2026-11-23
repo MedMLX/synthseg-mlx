@@ -21,7 +21,7 @@ Segment brain MRI or CT with SynthSeg in native MLX. Includes cortical parcellat
 
 | Model | Weights download | Peak MLX memory | Measured on |
 | :--- | ---: | ---: | :--- |
-| `synthseg` | 424 MB | 11.6 GB | 160×192×192 T1 MRI with cortical parcellation |
+| `synthseg` | 424 MB | 6.6 GB | Apple M1 Max, 160×192×192 T1 MRI with cortical parcellation |
 
 ## Install
 
@@ -94,6 +94,7 @@ can fail if that axis stays ten voxels or fewer after preprocessing.
 | :--- | :--- |
 | `InvalidInputError` | Images, options or existing outputs are invalid |
 | `AssetNotReadyError` | Checkpoints are missing or incompatible |
+| `ModelExecutionError` | The written files fail the output checks |
 
 ### Local weights
 

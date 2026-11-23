@@ -5,7 +5,7 @@ from typing import Literal, cast
 
 from medmlx_core.errors import InvalidInputError
 
-type ArithmeticProfile = Literal["source-fp32", "compensated-fp32"]
+type Precision = Literal["source-fp32", "compensated-fp32"]
 
 # BBillot/SynthSeg revision whose prediction graphs and CLI rules the variants follow.
 UPSTREAM_REVISION = "2a2aa3bbfccb83f8253a51ca8b329b9938a2646d"

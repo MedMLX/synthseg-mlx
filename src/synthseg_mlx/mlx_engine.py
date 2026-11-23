@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from medmlx_core.runtime import import_mlx
+from medmlx_core.typing import MlxRuntime
 
 from synthseg_mlx._typing import (
     DoubleArray,
     FloatArray,
     IndexArray,
     LabelArray,
-    NativeArrayApi,
     RealArray,
 )
 from synthseg_mlx.processing import postprocess
@@ -82,9 +82,9 @@ def predict_arrays(
 
     network_input = prepare_network_input(image)
     segmentation, parcellation, qc_score = model.predict(network_input)
-    cast(NativeArrayApi, mlxc).eval(segmentation, qc_score)
+    cast(MlxRuntime, mlxc).eval(segmentation, qc_score)
     if parcellation is not None:
-        cast(NativeArrayApi, mlxc).eval(parcellation)
+        cast(MlxRuntime, mlxc).eval(parcellation)
     return segmentation, parcellation, qc_score
 
 

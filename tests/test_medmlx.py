@@ -11,7 +11,7 @@ from medmlx_core.errors import InvalidInputError
 
 from synthseg_mlx import medmlx
 from synthseg_mlx._typing import NiftiApi
-from synthseg_mlx.variants import ArithmeticProfile
+from synthseg_mlx.variants import Precision
 
 nib = cast(NiftiApi, nib_runtime)
 
@@ -20,7 +20,7 @@ class RunArguments(TypedDict):
     image_path: Path
     output_dir: Path
     ct: NotRequired[bool]
-    precision: NotRequired[ArithmeticProfile]
+    precision: NotRequired[Precision]
 
 
 @pytest.mark.parametrize(

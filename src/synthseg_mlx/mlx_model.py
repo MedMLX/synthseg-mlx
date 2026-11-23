@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
     from medmlx_core.compensated import CompensatedFloat32Operators
@@ -20,36 +20,37 @@ if TYPE_CHECKING:
 import numpy as np
 from medmlx_core.errors import ModelExecutionError
 from medmlx_core.runtime import import_mlx
-from medmlx_core.typing import MlxRuntime
+from medmlx_core.typing import ArrayLayer, MlxRuntime, NeuralRuntime
 
-from synthseg_mlx._typing import (
-    IndexArray,
-    MetalKernel,
-    NativeArrayApi,
-    NativeCheckpointApi,
-    NativeOperation,
-    NeuralRuntime,
-)
-from synthseg_mlx.variants import ArithmeticProfile, SynthSegVariant, parse_variant
+from synthseg_mlx._typing import IndexArray
+from synthseg_mlx.variants import Precision, SynthSegVariant, parse_variant
 
 
-def _native_arrays():
+def _native_arrays() -> MlxRuntime:
     """Admit the MLX runtime and return its core array module."""
     import_mlx()
     import mlx.core as mx
 
-    return mx
+    return cast(MlxRuntime, mx)
 
 
 mx = _native_arrays()
 
-nn = cast(NeuralRuntime, import_module("mlx.nn"))
+
+class _NeuralModules(NeuralRuntime, Protocol):
+    """``mlx.nn`` functions plus the layer classes this module subclasses."""
+
+    Module: type[NativeModule]
+    Conv3d: type[NativeConv3d]
+
+
+nn = cast(_NeuralModules, import_module("mlx.nn"))
 
 
 def _evaluate(value: NativeArray) -> NativeArray:
     """Evaluate ``value`` now, so later graph building starts from stored data."""
 
-    cast(NativeArrayApi, mx).eval(value)
+    mx.eval(value)
     return value
 
 
@@ -61,16 +62,15 @@ def _defer(value: NativeArray) -> NativeArray:
 
 def load_safetensors(module: NativeModule, path: str | Path) -> None:
     """Load native parameters and require finite float32 values and matching shapes."""
-    api = cast(NativeCheckpointApi, mx)
     try:
         # An explicit format also supports Hub-cache symlinks to extensionless blobs.
-        weights = api.load(str(path), format="safetensors")
+        weights = mx.load(str(path), format="safetensors")
     except (OSError, ValueError, RuntimeError) as exc:
         raise ModelExecutionError(f"Cannot read SynthSeg safetensors {path}: {exc}") from exc
-    if any(value.dtype != api.float32 for value in weights.values()):
+    if any(value.dtype != mx.float32 for value in weights.values()):
         raise ModelExecutionError(f"SynthSeg safetensors {path} must contain float32 tensors")
-    finite = [api.all(api.isfinite(value)) for value in weights.values()]
-    api.eval(*finite)
+    finite = [mx.all(mx.isfinite(value)) for value in weights.values()]
+    mx.eval(*finite)
     if not all(bool(value.item()) for value in finite):
         raise ModelExecutionError(f"SynthSeg safetensors {path} contains non-finite values")
     try:
@@ -126,9 +126,10 @@ class CheckpointLayers(nn.Module):
         setattr(self, name, BatchNorm3d(channels, eps=1e-3, accuracy_ops=self._accuracy_ops))
         self.layer_names.append(name)
 
-    def layer(self, name: str) -> NativeOperation:
+    def layer(self, name: str) -> ArrayLayer:
         """Return a previously registered named checkpoint layer."""
-        return cast(NativeOperation, getattr(self, name))
+        return cast(ArrayLayer, getattr(self, name))
+
 
 class BatchNorm3d(nn.Module):
     """Inference-only channels-last batch normalization for five-dimensional tensors.
@@ -320,15 +321,14 @@ class RobustSegmentation(nn.Module):
             groups = groups[..., 1:]
         return self.fine(mx.concatenate([image, groups], axis=-1), bounded=bounded)
 
+
 # QC has one active input class per voxel. Spatial/class/output weight order
 # makes neighboring output channels read neighboring coefficients on Metal.
-_qc_class_convolution = cast(
-    MetalKernel,
-    mx.fast.metal_kernel(
-        name="synthseg_qc_class_convolution",
-        input_names=["indices", "weights", "bias"],
-        output_names=["out"],
-        source="""
+_qc_class_convolution = mx.fast.metal_kernel(
+    name="synthseg_qc_class_convolution",
+    input_names=["indices", "weights", "bias"],
+    output_names=["out"],
+    source="""
 uint wc=thread_position_in_grid.x;
 if (wc>=W*O) return;
 uint row=thread_position_in_grid.y;
@@ -356,19 +356,16 @@ for (int kd=0;kd<5;kd++) {
 }
 out[(base+ulong(row)*W+w)*O+co]=value+bias[co];
 """,
-        compile_options={"math_mode": "safe"},
-    ),
+    compile_options={"math_mode": "safe"},
 )
 
 # Keep each FP32 normalization rounding step; volatile products prevent FMA
 # contraction. Evaluate all eight source pool values, including negative gamma.
-_qc_residual_pool = cast(
-    MetalKernel,
-    mx.fast.metal_kernel(
-        name="synthseg_qc_residual_norm_pool",
-        input_names=["x", "residual", "mean", "scale", "weight", "bias"],
-        output_names=["out"],
-        source="""
+_qc_residual_pool = mx.fast.metal_kernel(
+    name="synthseg_qc_residual_norm_pool",
+    input_names=["x", "residual", "mean", "scale", "weight", "bias"],
+    output_names=["out"],
+    source="""
 uint wc=thread_position_in_grid.x;
 if (wc>=(W/2)*C) return;
 uint row=thread_position_in_grid.y;
@@ -396,8 +393,7 @@ for(int kd=0;kd<2;kd++) {
 ulong output=(((ulong(batch)*(D/2)+d)*(H/2)+h)*(W/2)+w)*C+channel;
 out[output]=pooled;
 """,
-        compile_options={"math_mode": "safe"},
-    ),
+    compile_options={"math_mode": "safe"},
 )
 
 
@@ -464,18 +460,22 @@ class QCNet(CheckpointLayers):
             stream=mx.gpu,
         )[0]
 
-    def _finish_block(self, x: NativeArray, residual: NativeArray, level: int) -> NativeArray:
-        # Second convolution of a QC level, then the residual add, norm and pool.
+    def _finish_block(
+        self, x: NativeArray, residual: NativeArray, level: int, *, bounded: bool = False
+    ) -> NativeArray:
         """Finish a QC block with its second convolution and residual pooling."""
-        x = self.layer(f"qc_conv_downarm_{level}_1")(x)
-        return self._norm_pool(x, residual, level)
+        # At full resolution, finish the main convolution before allocating the
+        # residual branch, then finish pooling before evaluating lower levels.
+        settle = _evaluate if bounded else _defer
+        x = settle(self.layer(f"qc_conv_downarm_{level}_1")(x))
+        return settle(self._norm_pool(x, residual, level))
 
-    def _forward(self, x: NativeArray, start: int) -> NativeArray:
+    def _forward(self, x: NativeArray, start: int, *, bounded: bool = False) -> NativeArray:
         """Run remaining QC blocks and average regional scores spatially."""
         for level in range(start, 4):
             residual = nn.relu(self.layer(f"qc_expand_down_merge_{level}")(x))
             x = nn.relu(self.layer(f"qc_conv_downarm_{level}_0")(x))
-            x = self._finish_block(x, residual, level)
+            x = self._finish_block(x, residual, level, bounded=bounded and level == 0)
         x = nn.relu(self.layer("qc_final_conv_0")(x))
         x = nn.relu(self.layer("qc_final_conv_1")(x))
         return x.mean(axis=(1, 2, 3))
@@ -501,8 +501,8 @@ class QCNet(CheckpointLayers):
             stream=mx.gpu,
         )[0]
 
-    def score_indices(self, indices: NativeArray) -> NativeArray:
-        """Score an int32 NDHW class map without materializing its one-hot volume."""
+    def score_indices(self, indices: NativeArray, *, bounded: bool = False) -> NativeArray:
+        """Score an int32 NDHW class map, evaluating the first block early if bounded."""
         if indices.ndim != 4 or indices.dtype != mx.int32:
             raise ModelExecutionError("SynthSeg QC class indices require int32 NDHW tensors")
         channels = cast("NativeConv3d", self.layer("qc_conv_downarm_0_0")).weight.shape[-1]
@@ -510,10 +510,10 @@ class QCNet(CheckpointLayers):
         # Preserve that accumulation order through the existing array interface.
         if channels > 16:
             one_hot = (indices[..., None] == mx.arange(channels, dtype=mx.int32)).astype(mx.float32)
-            return self(one_hot)
+            return self._forward(one_hot, 0, bounded=bounded)
         residual = nn.relu(self._class_convolve("qc_expand_down_merge_0", indices))
         x = nn.relu(self._class_convolve("qc_conv_downarm_0_0", indices))
-        return self._forward(self._finish_block(x, residual, 0), 1)
+        return self._forward(self._finish_block(x, residual, 0, bounded=bounded), 1)
 
 
 def crop_for_qc(indices: NativeArray, target: int = 224) -> NativeArray:
@@ -568,8 +568,8 @@ def _gaussian_weight(sigma: float, *, accurate: bool = False) -> NativeArray:
     """Normalized 3-D Gaussian kernel ``(K, K, K)`` with ``K = 2 * (ceil(2.5 * sigma) // 2) + 1``.
 
     ``sigma`` is in voxels; 0 gives a 1x1x1 identity kernel. ``accurate`` builds the
-    coefficients in float64 and rounds once to float32, for the compensated arithmetic
-    profile.
+    coefficients in float64 and rounds once to float32, for ``compensated-fp32``
+    precision.
     """
     width = int(math.ceil(2.5 * sigma) / 2) * 2 + 1
     if accurate:
@@ -596,13 +596,11 @@ def _gaussian_weight(sigma: float, *, accurate: bool = False) -> NativeArray:
 
 # Visit the same spatial taps as conv3d, omitting its zero cross-channel weights.
 # Explicit fma preserves the float32 accumulation order without separable passes.
-_gaussian_blur = cast(
-    MetalKernel,
-    mx.fast.metal_kernel(
-        name="synthseg_channelwise_gaussian",
-        input_names=["x", "weights"],
-        output_names=["out"],
-        source="""
+_gaussian_blur = mx.fast.metal_kernel(
+    name="synthseg_channelwise_gaussian",
+    input_names=["x", "weights"],
+    output_names=["out"],
+    source="""
 uint wc = thread_position_in_grid.x;
 if (wc >= W * C) return;
 uint row = thread_position_in_grid.y;
@@ -630,8 +628,7 @@ for (int kd = 0; kd < K; ++kd) {
 }
 out[base + ulong(row) * W * C + wc] = value;
 """,
-        compile_options={"math_mode": "safe"},
-    ),
+    compile_options={"math_mode": "safe"},
 )
 
 
@@ -667,26 +664,23 @@ class SynthSegModel(nn.Module):
         labels_denoiser: IndexArray | None = None,
         features: int = 24,
         denoiser_features: int = 16,
-        arithmetic_profile: ArithmeticProfile = "source-fp32",
+        precision: Precision = "source-fp32",
     ) -> None:
         """Construct the selected segmentation, parcellation, and QC graphs."""
         super().__init__()
         if not np.array_equal(np.unique(labels_qc), np.arange(len(np.unique(labels_qc)))):
             raise ModelExecutionError("SynthSeg MLX requires contiguous QC class indices")
         self.variant = parse_variant(robust=robust, fast=fast, v1=v1)
-        if arithmetic_profile not in {"source-fp32", "compensated-fp32"}:
-            raise ModelExecutionError(f"Unknown SynthSeg arithmetic profile {arithmetic_profile!r}")
-        if (
-            arithmetic_profile == "compensated-fp32"
-            and self.variant is not SynthSegVariant.STANDARD
-        ):
+        if precision not in {"source-fp32", "compensated-fp32"}:
+            raise ModelExecutionError(f"Unknown SynthSeg precision {precision!r}")
+        if precision == "compensated-fp32" and self.variant is not SynthSegVariant.STANDARD:
             raise ModelExecutionError("Compensated SynthSeg supports the standard 2.0 graph")
-        self.arithmetic_profile = arithmetic_profile
+        self.precision = precision
         self._accuracy_ops: CompensatedFloat32Operators | None = None
-        if arithmetic_profile == "compensated-fp32":
+        if precision == "compensated-fp32":
             from medmlx_core.compensated import CompensatedFloat32Operators as AccuracyOperators
 
-            self._accuracy_ops = AccuracyOperators(cast(MlxRuntime, mx), 1, 1e-3)
+            self._accuracy_ops = AccuracyOperators(mx, 1, 1e-3)
         if self.variant.robust:
             if labels_denoiser is None or not labels_denoiser.size:
                 raise ModelExecutionError("SynthSeg robust requires explicit denoiser labels")
@@ -712,7 +706,8 @@ class SynthSegModel(nn.Module):
                 features=features,
                 accuracy_ops=self._accuracy_ops,
             )
-            if parc else None
+            if parc
+            else None
         )
         self.qc = QCNet(len(np.unique(labels_qc)), features=features)
         if not self.variant.fast and flip_indices is None:
@@ -753,7 +748,7 @@ class SynthSegModel(nn.Module):
         labels_denoiser: IndexArray | None = None,
         features: int = 24,
         denoiser_features: int = 16,
-        arithmetic_profile: ArithmeticProfile = "source-fp32",
+        precision: Precision = "source-fp32",
     ) -> SynthSegModel:
         """Load native safetensors; parcellation is optional when ``parc=False``."""
 
@@ -771,7 +766,7 @@ class SynthSegModel(nn.Module):
             labels_denoiser=labels_denoiser,
             features=features,
             denoiser_features=denoiser_features,
-            arithmetic_profile=arithmetic_profile,
+            precision=precision,
         )
         model.load_safetensors(path_segmentation, path_parcellation, path_qc)
         return model
@@ -790,7 +785,7 @@ class SynthSegModel(nn.Module):
             load_safetensors(self.parcellation, path_parcellation)
         load_safetensors(self.qc, path_qc)
         self.eval()
-        cast(NativeArrayApi, mx).eval(self.parameters())
+        mx.eval(self.parameters())
 
     def blur(self, x: NativeArray, *, parcellation: bool = False) -> NativeArray:
         """Smooth each channel of ``x`` ``(B, D, H, W, C)`` with the 3-D Gaussian kernel.
@@ -864,7 +859,7 @@ class SynthSegModel(nn.Module):
 
         cropped = mx.stack([crop_for_qc(item, self.qc_shape) for item in indices])
         qc_indices = self.qc_labels[cropped]
-        qc = settle(self.qc.score_indices(qc_indices))
+        qc = settle(self.qc.score_indices(qc_indices, bounded=bounded))
 
         if self.parcellation is None:
             return segmentation, None, qc
@@ -914,7 +909,7 @@ class SynthSegModel(nn.Module):
             flipped = mx.flip(flipped, axis=1)[..., self.flip_indices]
             segmentation = self.blur((segmentation + flipped) * 0.5)
         else:
-            # Compensated and v1 profiles retain upstream smoothing before the mean.
+            # Compensated precision and the v1 variant retain upstream smoothing before the mean.
             segmentation = self.blur(segmentation)
             flipped = mx.flip(self.blur(flipped), axis=1)[..., self.flip_indices]
             segmentation = (segmentation + flipped) * 0.5
