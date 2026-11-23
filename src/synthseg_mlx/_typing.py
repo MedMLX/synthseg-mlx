@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict
 
 import numpy as np
 import numpy.typing as npt
+from medmlx_core.typing import HostArray
 
 if TYPE_CHECKING:
-    from mlx.core import Dtype, StreamOrDevice
+    from mlx.core import Dtype
     from mlx.core import array as NativeArray
     from mlx.nn.layers.base import Module as NativeModule
     from mlx.nn.layers.convolution import Conv3d as NativeConv3d
 
-type HostArray = npt.NDArray[np.generic]
 type RealArray = npt.NDArray[np.floating | np.integer | np.bool_]
 type FloatArray = npt.NDArray[np.float32]
 type DoubleArray = npt.NDArray[np.float64]
@@ -168,22 +168,6 @@ class NativeCheckpointApi(Protocol):
         ...
     def eval(self, *args: NativeArray) -> None:
         """Evaluate native arrays."""
-        ...
-
-
-class MetalKernel(Protocol):
-    def __call__(
-        self,
-        *,
-        inputs: list[NativeArray],
-        template: list[tuple[str, int]],
-        grid: tuple[int, int, int],
-        threadgroup: tuple[int, int, int],
-        output_shapes: list[tuple[int, ...]],
-        output_dtypes: list[Dtype],
-        stream: StreamOrDevice,
-    ) -> list[NativeArray]:
-        """Dispatch the kernel with explicit inputs, launch geometry, and output shapes."""
         ...
 
 

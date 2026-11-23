@@ -20,11 +20,10 @@ if TYPE_CHECKING:
 import numpy as np
 from medmlx_core.errors import ModelExecutionError
 from medmlx_core.runtime import import_mlx
-from medmlx_core.typing import MlxRuntime
+from medmlx_core.typing import MetalKernel, MlxRuntime
 
 from synthseg_mlx._typing import (
     IndexArray,
-    MetalKernel,
     NativeArrayApi,
     NativeCheckpointApi,
     NativeOperation,
