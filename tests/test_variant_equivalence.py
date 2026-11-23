@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from medmlx_core.errors import ModelExecutionError
 from medmlx_core.outputs import validate_outputs
+from medmlx_core.typing import MlxRuntime
 from recording_types import Recording
 from variant_fixtures import (
     assert_reporting_units,
@@ -32,7 +33,6 @@ from synthseg_mlx._typing import (
     DoubleArray,
     FloatArray,
     IndexArray,
-    NativeArrayApi,
     NiftiApi,
     RealArray,
     Size,
@@ -140,8 +140,8 @@ def test_variant_graph_matches_tensorflow(variant_case: ModelCase) -> None:
     """Compare each native variant graph and its outputs with TensorFlow recordings."""
     fixture, model, _, options = variant_case
     predictions = predict_numpy(model, fixture["input"])
-    whole_graph = model(cast(NativeArrayApi, mx).array(fixture["input"]))
-    cast(NativeArrayApi, mx).eval(*(value for value in whole_graph if value is not None))
+    whole_graph = model(cast(MlxRuntime, mx).array(fixture["input"]))
+    cast(MlxRuntime, mx).eval(*(value for value in whole_graph if value is not None))
     for field, actual, unstaged in zip(
         ("segmentation", "parcellation", "qc"), predictions, whole_graph, strict=True
     ):
@@ -153,7 +153,7 @@ def test_variant_graph_matches_tensorflow(variant_case: ModelCase) -> None:
         # Stage-by-stage evaluation must not change any value of the one-graph result.
         np.testing.assert_array_equal(actual, cast(RealArray, np.array(unstaged)), err_msg=field)
     _, conditioning = model.segmentation_predictions(
-        cast(NativeArrayApi, mx).array(fixture["input"])
+        cast(MlxRuntime, mx).array(fixture["input"])
     )
     actual_cortex = model.cortex_labels[mx.argmax(conditioning, axis=-1)]
     np.testing.assert_array_equal(

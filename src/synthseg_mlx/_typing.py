@@ -3,17 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict
+from typing import NotRequired, Protocol, TypedDict
 
 import numpy as np
 import numpy.typing as npt
 from medmlx_core.typing import HostArray
-
-if TYPE_CHECKING:
-    from mlx.core import Dtype
-    from mlx.core import array as NativeArray
-    from mlx.nn.layers.base import Module as NativeModule
-    from mlx.nn.layers.convolution import Conv3d as NativeConv3d
 
 type RealArray = npt.NDArray[np.floating | np.integer | np.bool_]
 type FloatArray = npt.NDArray[np.float32]
@@ -109,65 +103,6 @@ class NiftiApi(Protocol):
         ...
     def save(self, img: ImageVolume, filename: str) -> None:
         """Write a NIfTI image to a path."""
-        ...
-
-
-type ParameterValue = NativeArray | dict[str, ParameterValue] | list[ParameterValue]
-
-
-class NativeCallable(Protocol):
-    def __call__(self, values: NativeArray) -> NativeArray:
-        """Apply a native neural-network operation to an array."""
-        ...
-
-
-class NativeOperation(NativeCallable, Protocol):
-    weight: NativeArray
-    bias: NativeArray
-
-
-class NeuralRuntime(Protocol):
-    Module: type[NativeModule]
-    Conv3d: type[NativeConv3d]
-
-    def MaxPool3d(self, kernel_size: int, stride: int | None = None) -> NativeCallable:
-        """Construct a three-dimensional native max-pooling layer."""
-        ...
-
-    def relu(self, values: NativeArray) -> NativeArray:
-        """Apply the rectified linear activation."""
-        ...
-
-    def elu(self, values: NativeArray, alpha: float = 1.0) -> NativeArray:
-        """Apply the exponential linear activation."""
-        ...
-
-
-class NativeArrayApi(Protocol):
-    def array(self, val: RealArray | NativeArray, dtype: Dtype | None = None) -> NativeArray:
-        """Create an MLX array from host or native values."""
-        ...
-    def eval(self, *args: NativeArray | dict[str, ParameterValue]) -> None:
-        """Evaluate arrays in native parameter trees."""
-        ...
-
-
-class NativeCheckpointApi(Protocol):
-    @property
-    def float32(self) -> Dtype:
-        """Return the MLX float32 dtype."""
-        ...
-    def load(self, file: str, /, format: Literal["safetensors"]) -> dict[str, NativeArray]:
-        """Load named arrays from a safetensors file."""
-        ...
-    def isfinite(self, value: NativeArray) -> NativeArray:
-        """Check native array elements for finiteness."""
-        ...
-    def all(self, value: NativeArray) -> NativeArray:
-        """Reduce native boolean values to a scalar."""
-        ...
-    def eval(self, *args: NativeArray) -> None:
-        """Evaluate native arrays."""
         ...
 
 

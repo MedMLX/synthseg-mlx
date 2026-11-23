@@ -15,7 +15,6 @@ import gzip
 import os
 import shutil
 import time
-import zlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -46,6 +45,7 @@ from medmlx_core.errors import AssetNotReadyError, InvalidInputError, ModelExecu
 from medmlx_core.files import input_file, output_targets, publish
 from medmlx_core.outputs import Artifact, OutputLabel, artifact
 from medmlx_core.outputs import RunResult as _RunResult
+from medmlx_core.volumes import read_volume
 from medmlx_core.weights import model_folder, weights_revision
 
 from synthseg_mlx.variants import (
@@ -570,52 +570,26 @@ def _require_weight_files(
 
 
 def _validate_image(image: Path) -> None:
-    """Check image values and the millimetre geometry used for processing and volumes."""
+    """Check image values and the millimeter geometry used for processing and volumes."""
 
-    import nibabel as nib_runtime
-    from nibabel.filebasedimages import ImageFileError
-    from nibabel.spatialimages import HeaderDataError
-
-    nib = cast(NiftiApi, nib_runtime)
-
-    try:
-        loaded = nib.load(str(image))
-        data = cast(RealArray, np.asanyarray(loaded.dataobj))
-    # NiBabel 5.4 raises these for unreadable input: missing, empty or unknown
-    # files; unsupported header codes; truncated, mis-sized or corrupt gzip data
-    # (OSError, EOFError, zlib.error); and corrupt dimensions on the memory-mapped
-    # (OverflowError) or decompressed (ValueError) read.
-    except (
-        ImageFileError,
-        HeaderDataError,
-        OSError,
-        EOFError,
-        zlib.error,
-        OverflowError,
-        ValueError,
-    ) as exc:
-        raise InvalidInputError(f"SynthSeg could not read {image}: {exc}") from exc
-    if len(loaded.shape) != 3 or min(loaded.shape) < 3:
+    volume = read_volume(image, dtype=None)
+    data = volume.data
+    if min(data.shape) < 3:
         raise InvalidInputError("SynthSeg requires one 3D brain volume")
-    if not np.isfinite(data).all() or data.max() <= data.min():
+    if float(data.max()) <= float(data.min()):
         raise InvalidInputError("SynthSeg input must contain finite, nonconstant intensities")
-    if not np.isfinite(loaded.affine).all() or abs(np.linalg.det(loaded.affine[:3, :3])) < 1e-8:
-        raise InvalidInputError("SynthSeg input has invalid physical geometry")
-    try:
-        spatial_units, _ = loaded.header.get_xyzt_units()
-    except (AttributeError, KeyError, ValueError) as exc:
-        raise InvalidInputError("SynthSeg input has invalid NIfTI spatial units") from exc
-    if spatial_units not in ("mm", "unknown"):
+    # The pipeline reads the file's own affine and pixdim; a meter or micron header
+    # would be taken as millimeters there, so only millimeter or unspecified passes.
+    if int(volume.header["xyzt_units"]) & 0x07 not in (0, 2):
         raise InvalidInputError("SynthSeg requires NIfTI spatial units in mm or unspecified")
     # Upstream reads pixdim for resampling but uses the selected affine for output
     # geometry. A disagreement would assign the wrong physical scale to the result.
-    header_spacing = np.asarray(loaded.header["pixdim"][1:4], dtype=np.float64)
-    affine_spacing = np.linalg.norm(loaded.affine[:3, :3], axis=0)
-    if not np.allclose(header_spacing, affine_spacing, rtol=1e-5, atol=1e-6):
+    affine_spacing = np.linalg.norm(volume.affine[:3, :3], axis=0)
+    if not np.allclose(volume.zooms, affine_spacing, rtol=1e-5, atol=1e-6):
         raise InvalidInputError("SynthSeg NIfTI voxel spacing must match its selected affine")
     # Source volume reporting multiplies axis lengths, which is only voxel volume
     # for orthogonal grids. Rotated axes are supported; sheared axes are not.
-    directions = loaded.affine[:3, :3] / affine_spacing
+    directions = volume.affine[:3, :3] / affine_spacing
     if not np.allclose(directions.T @ directions, np.eye(3), rtol=0.0, atol=1e-5):
         raise InvalidInputError("SynthSeg does not support sheared NIfTI geometry")
 

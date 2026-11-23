@@ -7,9 +7,10 @@ from typing import Literal, Protocol, cast
 
 import mlx.core as mx
 import numpy as np
+from medmlx_core.typing import MlxRuntime
 from recording_types import Recording
 
-from synthseg_mlx._typing import DoubleArray, IntArray, NativeArrayApi, RealArray
+from synthseg_mlx._typing import DoubleArray, IntArray, RealArray
 
 
 class SafeTensorWriter(Protocol):
@@ -128,7 +129,7 @@ def write_weights(directory: Path, fixture: Recording) -> list[Path]:
                 if layer.startswith("l2l")
                 else ("fine." if layer.startswith("unet2") else "coarse.")
             )
-        tensors[index][f"{prefix}{layer}.{attributes[str(key)]}"] = cast(NativeArrayApi, mx).array(
+        tensors[index][f"{prefix}{layer}.{attributes[str(key)]}"] = cast(MlxRuntime, mx).array(
             values
         )
     for path, weights in zip(paths, tensors, strict=True):

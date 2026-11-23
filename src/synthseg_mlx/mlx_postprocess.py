@@ -18,7 +18,7 @@ from typing import cast
 
 import mlx.core as mx
 import numpy as np
-from medmlx_core.typing import MetalKernel
+from medmlx_core.typing import MetalKernel, MlxRuntime
 
 from synthseg_mlx import processing
 from synthseg_mlx._lab2im import edit_volumes
@@ -28,7 +28,6 @@ from synthseg_mlx._typing import (
     FloatArray,
     IndexArray,
     LabelArray,
-    NativeArrayApi,
     RealArray,
 )
 from synthseg_mlx.processing import report_volumes
@@ -144,7 +143,7 @@ def postprocess_mlx(
     low = [int(v) for v in pad_idx[:3]]
     size = [int(pad_idx[a + 3]) - low[a] for a in range(3)]
     rows = max(1, _SLAB_VOXELS // (seg.shape[1] * seg.shape[2]))
-    eval_ = cast(NativeArrayApi, mx).eval
+    eval_ = cast(MlxRuntime, mx).eval
 
     # Masks live on the padded grid with topology cleanup, as upstream labels
     # components before cropping, and on the cropped grid otherwise.
