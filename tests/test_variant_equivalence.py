@@ -340,6 +340,31 @@ def test_variant_runner_uses_the_same_graph_and_processing(
     assert_reporting_units(list(result["details"]["qc_scores"].values()), quality, decimals=4)
 
 
+@pytest.mark.parametrize(("unit", "scale"), [("meter", 1e-3), ("micron", 1e3)])
+def test_runner_converts_meter_and_micron_headers_to_millimeters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unit: str, scale: float
+) -> None:
+    """A meter or micron copy of the input gives the millimeter run's outputs, in mm."""
+    fixture, model, weights, options = model_case(tmp_path, "standard")
+    reduced_runner(fixture, model, weights, monkeypatch)
+    affine = fixture["runner_input_affine"].copy()
+    affine[:3] *= scale
+    image = tmp_path / "image.nii.gz"
+    converted = nib.Nifti1Image(fixture["runner_input"], affine)
+    converted.header.set_xyzt_units(unit, "unknown")
+    converted.header["pixdim"] = np.array(
+        [1.0, *np.linalg.norm(affine[:3, :3], axis=0), 1.0, 1.0, 1.0, 1.0]
+    )
+    nib.save(converted, str(image))
+    result = medmlx.run(
+        image_path=image, weights_path=tmp_path, output_dir=tmp_path / "out", **options
+    )
+    assert_runner_files(result, fixture)
+    for role in ("mask", "resampled_input"):
+        written = nib.load(result["outputs"][role])
+        assert written.header.get_xyzt_units()[0] == "mm"
+
+
 @pytest.mark.parametrize("failure", ["rename", "stale removal"])
 def test_publication_failure_restores_prior_outputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str

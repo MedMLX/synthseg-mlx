@@ -56,6 +56,9 @@ class ImageHeader(Protocol):
     def get_xyzt_units(self) -> tuple[str, str]:
         """Return the spatial and temporal unit names in the NIfTI header."""
         ...
+    def set_xyzt_units(self, xyz: str, t: str) -> None:
+        """Set the spatial and temporal unit names in the NIfTI header."""
+        ...
     def copy(self) -> ImageHeader:
         """Return a copy of the image header."""
         ...

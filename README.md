@@ -73,8 +73,9 @@ output with or without `parc`, unlike upstream's QC without `--parc`.
 Images must be:
 
 - finite, non-constant and 3D, with at least three voxels per axis;
-- in millimeter or unspecified spatial units, with header voxel sizes that match the
-  affine;
+- in millimeter, meter, micron or unspecified spatial units (meters and microns are
+  converted to millimeters; unspecified is taken as millimeters), with header voxel
+  sizes that match the affine;
 - on orthogonal axes (rotation is fine).
 
 A last axis of three voxels is rejected; four to ten voxels gives a warning, and padding

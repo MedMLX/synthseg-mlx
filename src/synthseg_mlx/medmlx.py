@@ -45,7 +45,7 @@ from medmlx_core.errors import AssetNotReadyError, InvalidInputError, ModelExecu
 from medmlx_core.files import input_file, output_targets, publish
 from medmlx_core.outputs import Artifact, OutputLabel, artifact
 from medmlx_core.outputs import RunResult as _RunResult
-from medmlx_core.volumes import read_volume
+from medmlx_core.volumes import read_volume, write_volume
 from medmlx_core.weights import model_folder, weights_revision
 
 from synthseg_mlx.variants import (
@@ -340,9 +340,9 @@ def run(
 
     Args:
         image_path: One 3D brain MRI ``.nii``/``.nii.gz`` (any contrast or resolution),
-            or a CT in Hounsfield units when ``ct`` is true. Spatial units must be mm
-            or unspecified (assumed mm), header spacing must match the affine, and
-            the grid axes must be orthogonal.
+            or a CT in Hounsfield units when ``ct`` is true. Meter and micron spatial units
+            are converted to mm and unspecified is taken as mm; header spacing must match
+            the affine, and the grid axes must be orthogonal.
         weights_path: Optional local folder with the selected segmentation
             checkpoint and the 2.0 QC checkpoint, plus the 2.0 parcellation checkpoint
             when ``parc=True``. All checkpoints must be native ``.safetensors`` files.
@@ -578,10 +578,6 @@ def _validate_image(image: Path) -> None:
         raise InvalidInputError("SynthSeg requires one 3D brain volume")
     if float(data.max()) <= float(data.min()):
         raise InvalidInputError("SynthSeg input must contain finite, nonconstant intensities")
-    # The pipeline reads the file's own affine and pixdim; a meter or micron header
-    # would be taken as millimeters there, so only millimeter or unspecified passes.
-    if int(volume.header["xyzt_units"]) & 0x07 not in (0, 2):
-        raise InvalidInputError("SynthSeg requires NIfTI spatial units in mm or unspecified")
     # Upstream reads pixdim for resampling but uses the selected affine for output
     # geometry. A disagreement would assign the wrong physical scale to the result.
     affine_spacing = np.linalg.norm(volume.affine[:3, :3], axis=0)
@@ -662,7 +658,16 @@ def _prepare_image(
     from synthseg_mlx._lab2im import utils
     from synthseg_mlx.processing import preprocess
 
-    loaded, _, affine, _, _, header, resolution = utils.get_volume_info(str(image), True)
+    loaded, _, _, _, _, header, _ = utils.get_volume_info(str(image), True)
+    # read_volume gives the affine and voxel sizes in millimeters, converting meter and
+    # micron headers; the written files carry them with a millimeter spatial unit.
+    geometry = read_volume(image, dtype=None)
+    affine = geometry.affine
+    resolution = np.array(geometry.zooms)
+    if int(geometry.header["xyzt_units"]) & 0x07 in (1, 3):
+        header = header.copy()
+        header.set_zooms(geometry.zooms)
+        header.set_xyzt_units("mm", header.get_xyzt_units()[1])
 
     def save_resampled(resampled: RealArray, resampled_affine: DoubleArray) -> None:
         """Write the prepared image and affine when resampling occurred."""
@@ -912,11 +917,19 @@ def _check_outputs(
         raise ModelExecutionError("SynthSeg wrote labels outside its declared parcellation")
     resampled = paths["resampled_input"].is_file()
     if not resampled:
-        source = nib.load(str(image))
-        if source.shape != mask.shape or not np.allclose(source.affine, mask.affine, atol=1e-4):
+        source = read_volume(image, dtype=None)
+        if source.data.shape != mask.shape or not np.allclose(
+            source.affine, mask.affine, atol=1e-4
+        ):
             raise ModelExecutionError("SynthSeg did not write the matching resampled image")
-        # Upstream omits this image when resampling is unnecessary.
-        copy_nifti(image, paths["resampled_input"])
+        # Upstream omits this image when resampling is unnecessary. A meter or micron
+        # source is rewritten in millimeters to match the mask; others are copied.
+        if int(source.header["xyzt_units"]) & 0x07 in (1, 3):
+            write_volume(
+                paths["resampled_input"], source.data, source.affine, dtype=source.data.dtype.type
+            )
+        else:
+            copy_nifti(image, paths["resampled_input"])
     reference = nib.load(str(paths["resampled_input"]))
     if reference.shape != mask.shape or not np.allclose(reference.affine, mask.affine, atol=1e-4):
         raise ModelExecutionError("SynthSeg mask and resampled image have different grids")
